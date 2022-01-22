@@ -1,0 +1,20 @@
+#!/bin/sh
+
+# https://www.diskinternals.com/linux-reader/bash-if-string-not-empty/
+
+# https://askubuntu.com/a/344418
+IFS=$'\n'       # make newlines the only separator
+for folder in $(ls -d */)
+do
+    # https://unix.stackexchange.com/a/104803
+    command_png="cd '$folder' && find . -name '*.png'"
+    result=$(eval $command_png)
+    if [ -z "$result" ]; then  # if result is empty string
+        command_params="cd '$folder' && find . -name 'params.json'"
+        result=$(eval $command_params)
+        if [ -n "$result" ]; then # if result is not empty string
+            rm -r "$folder"
+        fi
+    fi
+done
+unset IFS
