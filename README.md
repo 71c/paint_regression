@@ -1,17 +1,15 @@
 Introduction
 ============
 
-The goal of my paint regression project is to try to get an
-understanding of how artists paint, and also to get pretty pictures, by
-mathematically modeling a simplified view of how artists paint a picture
-from a reference photo. The idea is that a painting is constructed from
-a sequence of brush strokes, with each brush stroke being optimal or
-near optimal to get the painting as close as possible to what the artist
-wants it to look like. This optimality constraint is motivated by the
-fact that while computer monitors and printers are not limited in the
-number of pixels or dots to construct the image, artists are, because
-they cannot work nearly as fast, and hence, they will try to place brush
-strokes strategically to maximize the impact.
+The goal of my paint regression project is to try to get the computer to
+"paint" an image, by using a highly simplified model of how an artist
+paints a picture: this is how one would opt to paint if they wanted to
+get their painting as close as possible to a reference image with the
+least amount of effort. The goal of the program is to create a painting
+that is as close as possible to the source image after a given fixed
+number of brush strokes. A "brush stroke" is a region of pixels in the
+image, together with a color and an opacity, and applying a brush stroke
+is coloring in the painting with the color and opacity in the region.
 
 Setup
 =====
@@ -48,7 +46,9 @@ the set of all opacities, and <img src="https://i.upmath.me/svg/%5Cmathcal%20O%2
 The "loss" of the painting after <img src="https://i.upmath.me/svg/t" alt="t" /> iterations, <img src="https://i.upmath.me/svg/%5Cmathcal%7BL%7D(P_t)" alt="\mathcal{L}(P_t)" />, is
 the total squared error between the painting and the image. We have a
 function <img src="https://i.upmath.me/svg/%5Cmathcal%7BL%7D%20%3A%20%5Cmathcal%20I%20%5Cto%20%5Cmathbb%7BR%7D" alt="\mathcal{L} : \mathcal I \to \mathbb{R}" /> which gives the loss
-of a painting: <img src="https://i.upmath.me/svg/%5Cbegin%7Baligned%7D%0A%5Cmathcal%7BL%7D(P)%20%26%3A%3D%20%5Csum_%7Bi%3D1%7D%5Em%20%5Csum_%7Bj%3D1%7D%5En%20%5Csum_%7Bk%3D1%7D%5Ec%20(%20P(i%2Cj%2Ck)%20-%20I(i%2Cj%2Ck)%20)%5E2%20%5C%5C%0A%26%3D%20%5Csum_%7Bi%3D1%7D%5Em%20%5Csum_%7Bj%3D1%7D%5En%20%5Cunderbrace%7B%5C%7C%20P(i%2Cj)%20-%20I(i%2Cj)%20%5C%7C%5E2%7D_%7B%5Cell_P(i%2Cj)%7D%5Cend%7Baligned%7D" alt="\begin{aligned}
+of a painting:
+
+<img src="https://i.upmath.me/svg/%5Cbegin%7Baligned%7D%0A%5Cmathcal%7BL%7D(P)%20%26%3A%3D%20%5Csum_%7Bi%3D1%7D%5Em%20%5Csum_%7Bj%3D1%7D%5En%20%5Csum_%7Bk%3D1%7D%5Ec%20(%20P(i%2Cj%2Ck)%20-%20I(i%2Cj%2Ck)%20)%5E2%20%5C%5C%0A%26%3D%20%5Csum_%7Bi%3D1%7D%5Em%20%5Csum_%7Bj%3D1%7D%5En%20%5Cunderbrace%7B%5C%7C%20P(i%2Cj)%20-%20I(i%2Cj)%20%5C%7C%5E2%7D_%7B%5Cell_P(i%2Cj)%7D%5Cend%7Baligned%7D" alt="\begin{aligned}
 \mathcal{L}(P) &amp;:= \sum_{i=1}^m \sum_{j=1}^n \sum_{k=1}^c ( P(i,j,k) - I(i,j,k) )^2 \\
 &amp;= \sum_{i=1}^m \sum_{j=1}^n \underbrace{\| P(i,j) - I(i,j) \|^2}_{\ell_P(i,j)}\end{aligned}" />
 
@@ -69,8 +69,7 @@ where
 
 <img src="https://i.upmath.me/svg/b_%7B%5Cvec%20C%2CO%7D(%5Cvec%20x)%20%3D%20O%20%5Cvec%20C%20%2B%20(1-O)%20%5Cvec%20x." alt="b_{\vec C,O}(\vec x) = O \vec C + (1-O) \vec x." />
 
-Now I will write change in the loss from applying a brush
-<img src="https://i.upmath.me/svg/B%3D(R%2C%5Cvec%20C%2CO)" alt="B=(R,\vec C,O)" />. I will call this change of loss
+Now I will write change in the loss from applying a brush <img src="https://i.upmath.me/svg/B%3D(R%2C%5Cvec%20C%2CO)" alt="B=(R,\vec C,O)" />. I will call this change of loss
 
 <img src="https://i.upmath.me/svg/%5CDelta%20%5Cmathcal%7BL%7D_P(B)%20%3A%3D%20%5Cmathcal%7BL%7D(T_%7BB%7D(P))%20-%20%5Cmathcal%7BL%7D(P)." alt="\Delta \mathcal{L}_P(B) := \mathcal{L}(T_{B}(P)) - \mathcal{L}(P)." />
 
@@ -87,7 +86,6 @@ Write <img src="https://i.upmath.me/svg/P'%20%3D%20T_%7BB%7D(P)" alt="P' = T_{B}
 &amp;= \sum_{(i,j) \in R} \ell_{P'}(i,j) - \sum_{(i,j) \in R} \ell_P(i,j) \\
 &amp;= \sum_{(i,j) \in R} \| P'(i,j) - I(i,j) \|^2 - \sum_{(i,j) \in R} \ell_{P}(i,j) \\
 &amp;= \sum_{(i,j) \in R} \| b_{\vec C,O}(P(i,j)) - I(i,j) \|^2 - \sum_{(i,j) \in R} \| P(i,j) - I(i,j) \|^2.\end{aligned}" />
-
 This formula avoids the need to sum over the whole image, instead just
 summing over the region painted on. Note that the function
 <img src="https://i.upmath.me/svg/%5CDelta%20%5Cmathcal%7BL%7D_P" alt="\Delta \mathcal{L}_P" /> always outputs a non-positive value.
@@ -104,62 +102,57 @@ for all brushes. Thus when finding brushes we will minimize
 Choosing color and opacity given a brush region
 ===============================================
 
-Suppose that we have the current painting <img src="https://i.upmath.me/svg/P" alt="P" /> to paint on, and we already have a chosen region to paint on, <img src="https://i.upmath.me/svg/R" alt="R" />. Then we can choose the color <img src="https://i.upmath.me/svg/%5Cvec%20C" alt="\vec C" /> and opacity <img src="https://i.upmath.me/svg/O" alt="O" /> that minimize
-<img src="https://i.upmath.me/svg/%5CDelta%20%5Cmathcal%7BL%7D_P(R%2C%5Cvec%20C%2CO)" alt="\Delta \mathcal{L}_P(R,\vec C,O)" />. As shown above,
-
+Suppose that we have the current painting <img src="https://i.upmath.me/svg/P" alt="P" /> to paint on, and we
+already have a chosen region to paint on, <img src="https://i.upmath.me/svg/R" alt="R" />. Then we can choose the
+color <img src="https://i.upmath.me/svg/%5Cvec%20C" alt="\vec C" /> and opacity <img src="https://i.upmath.me/svg/O" alt="O" /> that minimize
+<img src="https://i.upmath.me/svg/%5CDelta%20%5Cmathcal%7BL%7D_P(R%2C%5Cvec%20C%2CO)." alt="\Delta \mathcal{L}_P(R,\vec C,O)." /> As shown above,
 <img src="https://i.upmath.me/svg/%5CDelta%20%5Cmathcal%7BL%7D_P(B)%20%3D%20%5Csum_%7B(i%2Cj)%20%5Cin%20R%7D%20%5C%7C%20b_%7B%5Cvec%20C%2CO%7D(P(i%2Cj))%20-%20I(i%2Cj)%20%5C%7C%5E2%20-%20%5Csum_%7B(i%2Cj)%20%5Cin%20R%7D%20%5C%7C%20P(i%2Cj)%20-%20I(i%2Cj)%20%5C%7C%5E2" alt="\Delta \mathcal{L}_P(B) = \sum_{(i,j) \in R} \| b_{\vec C,O}(P(i,j)) - I(i,j) \|^2 - \sum_{(i,j) \in R} \| P(i,j) - I(i,j) \|^2" />
-
 and the second term is constant with respect to <img src="https://i.upmath.me/svg/%5Cvec%20C" alt="\vec C" /> and <img src="https://i.upmath.me/svg/O" alt="O" />, so we
 want to minimize the following quantity:
 
-<img src="https://i.upmath.me/svg/%0A%5Csum_%7B(i%2Cj)%20%5Cin%20R%7D%20%5C%7C%20b_%7B%5Cvec%20C%2CO%7D(P(i%2Cj))%20-%20I(i%2Cj)%20%5C%7C%5E2.%0A" alt="
-\sum_{(i,j) \in R} \| b_{\vec C,O}(P(i,j)) - I(i,j) \|^2.
-" />
+<img src="https://i.upmath.me/svg/%20%5Csum_%7B(i%2Cj)%20%5Cin%20R%7D%20%5C%7C%20b_%7B%5Cvec%20C%2CO%7D(P(i%2Cj))%20-%20I(i%2Cj)%20%5C%7C%5E2" alt=" \sum_{(i,j) \in R} \| b_{\vec C,O}(P(i,j)) - I(i,j) \|^2" />
 
 And if we
 write <img src="https://i.upmath.me/svg/%5Cvec%20%5Calpha%20%3D%20O%5Cvec%20C" alt="\vec \alpha = O\vec C" /> and <img src="https://i.upmath.me/svg/%5Cbeta%20%3D%201-O" alt="\beta = 1-O" />, then
+
 <img src="https://i.upmath.me/svg/b_%7B%5Cvec%20C%2CO%7D(%5Cvec%20x)%20%3D%20O%20%5Cvec%20C%20%2B%20(1-O)%20%5Cvec%20x%20%3D%20%5Cvec%20%5Calpha%20%2B%20%5Cbeta%20%5Cvec%20x" alt="b_{\vec C,O}(\vec x) = O \vec C + (1-O) \vec x = \vec \alpha + \beta \vec x" />
+
 and it doesn't matter if we optimize <img src="https://i.upmath.me/svg/%5Cvec%20%5Calpha" alt="\vec \alpha" /> and <img src="https://i.upmath.me/svg/%5Cbeta" alt="\beta" /> instead
 of <img src="https://i.upmath.me/svg/%5Cvec%20C" alt="\vec C" /> and <img src="https://i.upmath.me/svg/O" alt="O" /> because you can go back and forth between the two
-forms. If we write <img src="https://i.upmath.me/svg/R%20%3D%20%5C%7B%20(i_1%2Cj_1)%2C%20%5Cdots%2C%20(i_N%2Cj_N)%20%5C%7D" alt="R = \{ (i_1,j_1), \dots, (i_N,j_N) \}" />, and then
-write
+forms. If we write <img src="https://i.upmath.me/svg/R%20%3D%20%5C%7B%20(i_1%2Cj_1)%2C%20%5Cdots%2C%20(i_N%2Cj_N)%20%5C%7D%2C" alt="R = \{ (i_1,j_1), \dots, (i_N,j_N) \}," />
 
-<img src="https://i.upmath.me/svg/X%20%3A%3D%20%5Cbegin%7Bbmatrix%7D%20P(i_1%2Cj_1)%20%5C%5C%20%5Cvdots%20%5C%5C%20P(i_N%2Cj_N)%0A%5Cend%7Bbmatrix%7D%2C%20%5Cquad%20Y%20%3A%3D%20%5Cbegin%7Bbmatrix%7D%0AI(i_1%2Cj_1)%20%5C%5C%0A%5Cvdots%20%5C%5C%0AI(i_N%2Cj_N)%0A%5Cend%7Bbmatrix%7D%2C" alt="X := \begin{bmatrix} P(i_1,j_1) \\ \vdots \\ P(i_N,j_N)
-\end{bmatrix}, \quad Y := \begin{bmatrix}
-I(i_1,j_1) \\
-\vdots \\
-I(i_N,j_N)
-\end{bmatrix}," />
+and then write
 
-then we can rewrite the equation like this:
+<img src="https://i.upmath.me/svg/X%20%3A%3D%20%5Cbegin%7Bbmatrix%7DP(i_1%2Cj_1)%20%5C%5C%20%5Cvdots%20%5C%5C%20P(i_N%2Cj_N)%20%5Cend%7Bbmatrix%7D%2C%20%5Cquad%20Y%20%3A%3D%20%5Cbegin%7Bbmatrix%7D%20I(i_1%2Cj_1)%20%5C%5C%20%5Cvdots%20%5C%5C%20I(i_N%2Cj_N)%20%5Cend%7Bbmatrix%7D%2C" alt="X := \begin{bmatrix}P(i_1,j_1) \\ \vdots \\ P(i_N,j_N) \end{bmatrix}, \quad Y := \begin{bmatrix} I(i_1,j_1) \\ \vdots \\ I(i_N,j_N) \end{bmatrix}," />
 
-<img src="https://i.upmath.me/svg/%5Csum_%7B(i%2Cj)%20%5Cin%20R%7D%20%5C%7C%20b_%7B%5Cvec%20C%2CO%7D(P(i%2Cj))%20-%20I(i%2Cj)%20%5C%7C%5E2%3D%0A%5Csum_%7Bi%3D1%7D%5EN%20%5C%7C%20%5Cvec%20%5Calpha%20%2B%20%5Cbeta%20X_i%20-%20Y_i%20%5C%7C%5E2%3D%5Csum_%7Bi%3D1%7D%5EN%20%5Csum_%7Bj%3D1%7D%5Ec%20%5B%5Cvec%20%5Calpha_j%20%2B%20%5Cbeta%20X_%7Bi%2Cj%7D%20-%20Y_%7Bi%2Cj%7D%20%5D%5E2." alt="\sum_{(i,j) \in R} \| b_{\vec C,O}(P(i,j)) - I(i,j) \|^2=
-\sum_{i=1}^N \| \vec \alpha + \beta X_i - Y_i \|^2=\sum_{i=1}^N \sum_{j=1}^c [\vec \alpha_j + \beta X_{i,j} - Y_{i,j} ]^2." />
+then we can rewrite:
+
+<img src="https://i.upmath.me/svg/%5Csum_%7B(i%2Cj)%20%5Cin%20R%7D%20%5C%7C%20b_%7B%5Cvec%20C%2CO%7D(P(i%2Cj))%20-%20I(i%2Cj)%20%5C%7C%5E2%20%3D%0A%5Csum_%7Bi%3D1%7D%5EN%20%5C%7C%20%5Cvec%20%5Calpha%20%2B%20%5Cbeta%20X_i%20-%20Y_i%20%5C%7C%5E2%20%3D%20%5Csum_%7Bi%3D1%7D%5EN%20%5Csum_%7Bj%3D1%7D%5Ec%20%5B%5Cvec%20%5Calpha_j%20%2B%20%5Cbeta%20X_%7Bi%2Cj%7D%20-%20Y_%7Bi%2Cj%7D%20%5D%5E2." alt="\sum_{(i,j) \in R} \| b_{\vec C,O}(P(i,j)) - I(i,j) \|^2 =
+\sum_{i=1}^N \| \vec \alpha + \beta X_i - Y_i \|^2 = \sum_{i=1}^N \sum_{j=1}^c [\vec \alpha_j + \beta X_{i,j} - Y_{i,j} ]^2." />
 
 We want to choose <img src="https://i.upmath.me/svg/%5Cvec%20%5Calpha" alt="\vec \alpha" /> and <img src="https://i.upmath.me/svg/%5Cbeta" alt="\beta" /> that minimize this quantity.
-By taking partial derivatives, one can obtain the following solution <img src="https://i.upmath.me/svg/(%5Cvec%20%5Calpha%5E*%2C%5Cbeta%5E*)" alt="(\vec \alpha^*,\beta^*)" />.
+By taking partial derivatives, one can obtain the following solution
+<img src="https://i.upmath.me/svg/(%5Cvec%20%5Calpha%5E*%2C%5Cbeta%5E*)" alt="(\vec \alpha^*,\beta^*)" />.
 
 Write the mean of the <img src="https://i.upmath.me/svg/k" alt="k" /> component of <img src="https://i.upmath.me/svg/X" alt="X" /> and <img src="https://i.upmath.me/svg/Y" alt="Y" /> as
 
 <img src="https://i.upmath.me/svg/%5Coverline%7BX_%7B%3A%2Ck%7D%7D%20%3A%3D%20%5Cfrac%7B1%7D%7BN%7D%20%5Csum_%7Bi%3D1%7D%5EN%20X_%7Bi%2Ck%7D%2C%20%5Cquad%0A%5Coverline%7BY_%7B%3A%2Ck%7D%7D%20%3A%3D%20%5Cfrac%7B1%7D%7BN%7D%20%5Csum_%7Bi%3D1%7D%5EN%20Y_%7Bi%2Ck%7D%2C" alt="\overline{X_{:,k}} := \frac{1}{N} \sum_{i=1}^N X_{i,k}, \quad
 \overline{Y_{:,k}} := \frac{1}{N} \sum_{i=1}^N Y_{i,k}," />
 
-and <img src="https://i.upmath.me/svg/S_%7Bxx%7D" alt="S_{xx}" />
-and <img src="https://i.upmath.me/svg/S_%7Bxy%7D" alt="S_{xy}" /> are
+and <img src="https://i.upmath.me/svg/S_%7Bxx%7D" alt="S_{xx}" /> and <img src="https://i.upmath.me/svg/S_%7Bxy%7D" alt="S_{xy}" /> are
 
 <img src="https://i.upmath.me/svg/S_%7Bxx%7D%20%3A%3D%20%5Csum_%7Bi%3D1%7D%5EN%20%5Csum_%7Bj%3D1%7D%5Ec%20(X_%7Bi%2Cj%7D%20-%20%5Coverline%7BX_%7B%3A%2Cj%7D%7D)%5E2%2C%20%5Cquad%0AS_%7Bxy%7D%20%3A%3D%20%5Csum_%7Bi%3D1%7D%5EN%20%5Csum_%7Bj%3D1%7D%5Ec%20(X_%7Bi%2Cj%7D%20-%20%5Coverline%7BX_%7B%3A%2Cj%7D%7D)%20(Y_%7Bi%2Cj%7D%20-%20%5Coverline%7BY_%7B%3A%2Cj%7D%7D)" alt="S_{xx} := \sum_{i=1}^N \sum_{j=1}^c (X_{i,j} - \overline{X_{:,j}})^2, \quad
 S_{xy} := \sum_{i=1}^N \sum_{j=1}^c (X_{i,j} - \overline{X_{:,j}}) (Y_{i,j} - \overline{Y_{:,j}})" />
 
 then the solution is:
 
-<img src="https://i.upmath.me/svg/%5Calpha%5E*_k%20%3D%20%5Coverline%7BY_%7B%3A%2Ck%7D%7D%20-%20%5Cbeta%5E*%20%5Coverline%7BX_%7B%3A%2Ck%7D%7D%2C" alt="\alpha^*_k = \overline{Y_{:,k}} - \beta^* \overline{X_{:,k}}," /> 
+<img src="https://i.upmath.me/svg/%5Calpha%5E*_k%20%3D%20%5Coverline%7BY_%7B%3A%2Ck%7D%7D%20-%20%5Cbeta%5E*%20%5Coverline%7BX_%7B%3A%2Ck%7D%7D%2C" alt="\alpha^*_k = \overline{Y_{:,k}} - \beta^* \overline{X_{:,k}}," />
 
 and
 
 <img src="https://i.upmath.me/svg/%5Cbeta%5E*%20%3D%20%5Cfrac%7BS_%7Bxy%7D%7D%7BS_%7Bxx%7D%7D%20%5Cquad%20%5Ctext%7Bif%20%7D%20S_%7Bxx%7D%20%5Cneq%200." alt="\beta^* = \frac{S_{xy}}{S_{xx}} \quad \text{if } S_{xx} \neq 0." />
 
-If
-<img src="https://i.upmath.me/svg/S_%7Bxx%7D%20%3D%200" alt="S_{xx} = 0" />, then it must be the case that <img src="https://i.upmath.me/svg/S_%7Bxy%7D%20%3D%200" alt="S_{xy} = 0" /> in which case
+If <img src="https://i.upmath.me/svg/S_%7Bxx%7D%20%3D%200" alt="S_{xx} = 0" />, then it must be the case that <img src="https://i.upmath.me/svg/S_%7Bxy%7D%20%3D%200" alt="S_{xy} = 0" /> in which case
 any value of <img src="https://i.upmath.me/svg/%5Cbeta%5E*" alt="\beta^*" /> works (so if <img src="https://i.upmath.me/svg/S_%7Bxx%7D%20%3D%200" alt="S_{xx} = 0" /> but <img src="https://i.upmath.me/svg/S_%7Bxy%7D%20%5Cneq%200" alt="S_{xy} \neq 0" />,
 then there was an arithmetic error).
 
@@ -212,7 +205,7 @@ anonymous function using the lambda calculus notation):
 
     2.  For each brush class <img src="https://i.upmath.me/svg/k%3D1" alt="k=1" /> through <img src="https://i.upmath.me/svg/K" alt="K" />:
 
-    3.  1. <img src="https://i.upmath.me/svg/(%5Ctheta%2C%20L)%20%3A%3D%20%5Ctextsc%7BHillClimbing%7D(%5Clambda%20%5Ctheta%20.%20%5CDelta%20%5Cmathcal%7BL%7D_%7BP_t%7D(r_k(%5Ctheta)%2C%20p(r_k(%5Ctheta)%2C%20P_t))%2C%20G_k%2C%20n_k)" alt="(\theta, L) := \textsc{HillClimbing}(\lambda \theta . \Delta \mathcal{L}_{P_t}(r_k(\theta), p(r_k(\theta), P_t)), G_k, n_k)" />
+    3.  1.  <img src="https://i.upmath.me/svg/(%5Ctheta%2C%20L)%20%3A%3D%20%5Ctextsc%7BHillClimbing%7D(%5Clambda%20%5Ctheta%20.%20%5CDelta%20%5Cmathcal%7BL%7D_%7BP_t%7D(r_k(%5Ctheta)%2C%20p(r_k(%5Ctheta)%2C%20P_t))%2C%20G_k%2C%20n_k)" alt="(\theta, L) := \textsc{HillClimbing}(\lambda \theta . \Delta \mathcal{L}_{P_t}(r_k(\theta), p(r_k(\theta), P_t)), G_k, n_k)" />
 
         2.  If <img src="https://i.upmath.me/svg/L%20%3C%20L_%7B%5Ctext%7Bbest%7D%7D" alt="L &lt; L_{\text{best}}" />, then
 
