@@ -421,15 +421,6 @@ class RectangleBrush(Brush):
         return f"RectangleBrush(row={self._row0}, col={self._col0}, width={self._width}, length={self._length}, angle={self._angle:.4f})"
 
 
-def apply_brush(painting, brush, alpha, beta):
-    m, n, c = painting.shape
-    min_row, max_row, row_specs = brush.get_boundary_rows(m, n)
-    rows = range(min_row, max_row + 1)
-
-    for row, (min_col, max_col) in zip(rows, row_specs):
-        painting[row, min_col : max_col + 1] = alpha + beta * painting[row, min_col : max_col + 1]
-
-
 def random_search(loss_func, random_candidate_func, n_samples, init_best_loss=np.inf):
     best_loss = init_best_loss
     best_x = None
@@ -461,7 +452,6 @@ def hill_climbing(loss_func, random_candidate_func, neighbor_func, n_samples, be
             while best_x_iter is None:
                 best_x_iter, best_loss_iter, best_info_iter = random_search(loss_func, random_candidate_func, n_samples=best_of_per_restart, init_best_loss=np.inf)
 
-        # print(f'initial: {best_loss_iter}')
         for k in range(n_opt_iter):
             best_neighbor = neighbor_func(best_x_iter)
             best_neighbor_loss, best_neighbor_info = loss_func(best_neighbor)
@@ -477,7 +467,6 @@ def hill_climbing(loss_func, random_candidate_func, neighbor_func, n_samples, be
                 best_x_iter = best_neighbor
                 best_info_iter = best_neighbor_info
             elif stop_if_no_improvement:
-                # print(k, f'final: {best_loss_iter}')
                 break
 
         if best_loss_iter < best_loss:
@@ -588,54 +577,44 @@ class Painter:
         self._max_n_pixels_regression = np.inf if max_n_pixels_regression is None else max_n_pixels_regression
 
     def _evaluate_brush_loss(self, brush, random_sample=True):
-        m = self._m
-        n = self._n
+        m, n = self._m, self._n
         painting = self._painting
-        arr = self._src_image
+        src = self._src_image
 
         min_row, max_row, row_specs = brush.get_boundary_rows(m, n)
         assert len(row_specs) == max_row - min_row + 1
         rows = range(min_row, max_row + 1)
 
-        painting_brush_rows = []
-        arr_brush_rows = []
+        X_rows = []
+        Y_rows = []
         
         for row, (min_col, max_col) in zip(rows, row_specs):
-            painting_brush_rows.append(painting[row, min_col : max_col + 1])
-            arr_brush_rows.append(arr[row, min_col : max_col + 1])
+            X_rows.append(painting[row, min_col : max_col + 1])
+            Y_rows.append(src[row, min_col : max_col + 1])
 
         original_n_pixels = brush._n_pixels
-
-        # painting_brush_pixels = np.concatenate(painting_brush_rows)
-        # arr_brush_pixels = np.concatenate(arr_brush_rows)
-
-        # if random_sample and original_n_pixels > self._max_n_pixels_regression:
-        #     indices = np.random.choice(original_n_pixels, size=self._max_n_pixels_regression, replace=False)
-        #     painting_brush_pixels = painting_brush_pixels[indices]
-        #     arr_brush_pixels = arr_brush_pixels[indices]
-
 
         if random_sample and original_n_pixels > self._max_n_pixels_regression:
             num_rows = max_row - min_row + 1
             if num_rows <= 5:
-                painting_brush_pixels = np.concatenate(painting_brush_rows)
-                arr_brush_pixels = np.concatenate(arr_brush_rows)
+                X = np.concatenate(X_rows)
+                Y = np.concatenate(Y_rows)
                 indices = np.random.choice(original_n_pixels, size=self._max_n_pixels_regression, replace=False)
-                painting_brush_pixels = painting_brush_pixels[indices]
-                arr_brush_pixels = arr_brush_pixels[indices]
+                X = X[indices]
+                Y = Y[indices]
             else:
                 prop = self._max_n_pixels_regression / original_n_pixels
                 n_rows_to_pick = int(round(prop * num_rows))
                 indices = np.random.choice(num_rows, size=n_rows_to_pick, replace=False)
-                painting_brush_rows = [painting_brush_rows[i] for i in indices]
-                arr_brush_rows = [arr_brush_rows[i] for i in indices]
-                painting_brush_pixels = np.concatenate(painting_brush_rows)
-                arr_brush_pixels = np.concatenate(arr_brush_rows)
+                X_rows = [X_rows[i] for i in indices]
+                Y_rows = [Y_rows[i] for i in indices]
+                X = np.concatenate(X_rows)
+                Y = np.concatenate(Y_rows)
         else:
-            painting_brush_pixels = np.concatenate(painting_brush_rows)
-            arr_brush_pixels = np.concatenate(arr_brush_rows)
+            X = np.concatenate(X_rows)
+            Y = np.concatenate(Y_rows)
 
-        mx, my, sxx, sxy, alpha, beta = get_least_squares_paint_regression_coefs(painting_brush_pixels, arr_brush_pixels)
+        mx, my, sxx, sxy, alpha, beta = get_least_squares_paint_regression_coefs(X, Y)
 
         # enforce that the brush opacity and color are in range
         o = 1 - beta
@@ -644,21 +623,28 @@ class Painter:
         c = alpha / o
         if not np.all(np.logical_and(0 <= c, c <= 1)):
             return np.inf, (alpha, beta)
-        
-        # original_err = np.sum((painting_brush_pixels - arr_brush_pixels)**2)
-        # new_painting_brush_pixels = alpha + beta * painting_brush_pixels
-        # new_err = np.sum((new_painting_brush_pixels - arr_brush_pixels)**2)
-        # loss = new_err - original_err
 
-        N = painting_brush_pixels.shape[0]
+        N = X.shape[0]
+
+        # Calculate the loss. Equivalent to calculating the following:
+        #    np.sum((alpha + beta * X - Y)**2) - np.sum((X - Y)**2)
         original_err_2 = sxx - 2 * sxy + N * np.sum((mx - my)**2)
         new_err_2 = beta**2 * sxx - 2 * beta * sxy
         loss = new_err_2 - original_err_2
 
         if random_sample and original_n_pixels > self._max_n_pixels_regression:
-            loss = loss / painting_brush_pixels.shape[0] * original_n_pixels
+            loss = loss / N * original_n_pixels
 
         return loss, (alpha, beta)
+    
+    def _apply_brush(self, brush, alpha, beta):
+        painting = self._painting
+        m, n = self._m, self._n
+        min_row, max_row, row_specs = brush.get_boundary_rows(m, n)
+        rows = range(min_row, max_row + 1)
+
+        for row, (min_col, max_col) in zip(rows, row_specs):
+            painting[row, min_col : max_col + 1] = alpha + beta * painting[row, min_col : max_col + 1]
 
     @dataclass(order=True)
     class PrioritizedBrush:
@@ -699,27 +685,9 @@ class Painter:
 
         return self.PrioritizedBrush(loss=loss, brush=brush, params=params)
 
-    def get_intersection_avoiding_random_brush_func(self, random_brush_func):
-        self._items.sort()
-        # curr_best_brushes = self._items[:self._n_queue // 5]
-        curr_best_brushes = self._items[:3]
-        def f():
-            brush = random_brush_func()
-            n_tries = 0
-            while any([b.brush.intersects(brush) for b in curr_best_brushes]) and n_tries < 10:
-                brush = random_brush_func()
-                n_tries += 1
-            return brush
-        return f
-
     def _add_random_brush(self):
         brush_type = random.choice(self._brush_types)
-
         item = self._get_new_item(brush_type)
-
-        # random_brush_func = self.get_intersection_avoiding_random_brush_func(self._brush_type_to_random_brush_func[brush_type])
-        # brush, loss, params = self._get_new_item(brush_type, random_brush_func)
-
         self._add_item(item)
 
     def paint_stroke(self):
@@ -754,7 +722,7 @@ class Painter:
 
             self._curr_loss += best_loss
             best_alpha, best_beta = best_params
-            apply_brush(self._painting, best_brush, best_alpha, best_beta)
+            self._apply_brush(best_brush, best_alpha, best_beta)
 
             ###########  Remove brushes that intersect the added brush, and add new brushes back
             queue_size = len(self._items)
@@ -794,7 +762,7 @@ class Painter:
 
                 self._curr_loss += best_loss
                 best_alpha, best_beta = best_params
-                apply_brush(self._painting, best_brush, best_alpha, best_beta)
+                self._apply_brush(best_brush, best_alpha, best_beta)
 
                 self._n_iters += 1
 
