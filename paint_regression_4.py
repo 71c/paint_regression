@@ -12,8 +12,10 @@ from dataclasses import dataclass, field
 from typing import Any
 from copy import deepcopy
 import random
+from numba import jit
 
 
+@jit(nopython=True)
 def get_max_beta_for_zero_sxy_and_sxx(mx, my):
     n = len(mx)
     max_beta = 1.0
@@ -31,6 +33,7 @@ def get_max_beta_for_zero_sxy_and_sxx(mx, my):
     return max_beta
 
 
+@jit(nopython=True)
 def get_least_squares_paint_regression_coefs_from_stats(mx, my, sxx, sxy):
     # Solves beta * sxx == sxy
 
@@ -163,6 +166,110 @@ class CircleBrush(Brush):
         return f"CircleBrush(row={self._row0}, col={self._col0}, radius={self._radius})"
 
 
+@jit(nopython=True)
+def func(m, n, row0, col0, width, length, theta):
+    assert width >= 1
+    assert length >= 1
+
+    if theta == np.pi/2 or theta == -np.pi/2:
+        width, length = length, width
+        theta = 0
+    
+    if theta == 0:
+        min_row = int(max(row0 - width/2, 0))
+        max_row = int(min(row0 + width/2 - 1, m-1))
+        min_col = int(max(col0 - length/2, 0))
+        max_col = int(min(col0 + length/2 - 1, n-1))
+        row_specs = [(min_col, max_col) for row in range(min_row, max_row + 1)]
+        return min_row, max_row, row_specs
+    
+    if width == 1:
+        if length == 1:
+            return row0, row0, [(col0, col0)]
+        
+        if length <= 5 and abs(theta) <= 0.3:
+            # theta is very small, effectively 0
+            left_col = int(round(col0 - length/2))
+            right_col = int(round(left_col + length - 1))
+            left_col = max(left_col, 0)
+            right_col = min(right_col, n-1)
+            return row0, row0, [(left_col, right_col)]
+
+        b = length / 2
+        cos, sin = np.cos(theta), np.sin(theta)
+        
+        x2, y2 = b * cos, b * sin
+        x1, y1 = -x2, -y2
+
+        min_row = int(round(row0 + min(y1, y2)))
+        max_row = int(round(row0 + max(y1, y2))) - 1
+        if max_row == min_row - 1:
+            max_row = min_row
+        min_row = max(min_row, 0)
+        max_row = min(max_row, m - 1)
+
+        row_specs = []
+        true_min_row, true_max_row = 2*m, -2*m
+        for row in range(min_row, max_row + 1):
+            y = row - row0
+            x = (x2 - x1) / (y2 - y1) * (y - y1) + x1
+            col = int(round(x)) + col0
+            if 0 <= col < n-1:
+                row_specs.append((col, col))
+                if row < true_min_row:
+                    true_min_row = row
+                if row > true_max_row:
+                    true_max_row = row
+
+        return true_min_row, true_max_row, row_specs
+
+    if theta < 0:
+        width, length = length, width
+        theta = np.pi/2 - (-theta)
+    
+    assert 0 < theta < np.pi/2
+
+    a, b = width/2, length/2
+    cos, sin = np.cos(theta), np.sin(theta)
+
+    x1 = -b * cos - a * sin
+    y1 = -b * sin + a * cos
+    x2 = b * cos - a * sin
+    y2 = b * sin + a * cos
+    x3 = -x2
+    y3 = -y2
+
+    min_row = max(int(np.ceil(row0 + y3)), 0)
+    max_row = min(int(np.floor(row0 + y2)) - 1, m-1)
+
+    row_specs = []
+    true_min_row, true_max_row = 2*m, -2*m
+    for row in range(min_row, max_row + 1):
+        y = row - row0 + 0.001
+
+        if y1 <= y <= y2:
+            x_left = int(round((x2 - x1) / (y2 - y1) * (y - y1) + x1))
+        else:
+            x_left = int(round((x3 - x1) / (y3 - y1) * (y - y1) + x1))
+        
+        if y1 <= -y <= y2:
+            x_right = int(round(-((x2 - x1) / (y2 - y1) * (-y - y1) + x1)))
+        else:
+            x_right = int(round(-((x3 - x1) / (y3 - y1) * (-y - y1) + x1)))
+
+        min_col = max(col0 + x_left, 0)
+        max_col = min(col0 + x_right - 1, n-1)
+        if max_col >= 0:
+            if min_col <= max_col:
+                row_specs.append((min_col, max_col))
+                if row < true_min_row:
+                    true_min_row = row
+                if row > true_max_row:
+                    true_max_row = row
+
+    return true_min_row, true_max_row, row_specs
+
+
 class RectangleBrush(Brush):
     def __init__(self, row, col, width, length, angle):
         assert -np.pi/2 <= angle <= np.pi/2
@@ -185,102 +292,7 @@ class RectangleBrush(Brush):
     
     def _get_boundary_rows_helper(self, m, n):
         row0, col0, width, length, theta = self._row0, self._col0, self._width, self._length, self._angle
-        assert width >= 1
-        assert length >= 1
-
-        if theta == np.pi/2 or theta == -np.pi/2:
-            width, length = length, width
-            theta = 0
-        
-        if theta == 0:
-            min_row = int(max(row0 - width/2, 0))
-            max_row = int(min(row0 + width/2 - 1, m-1))
-            min_col = int(max(col0 - length/2, 0))
-            max_col = int(min(col0 + length/2 - 1, n-1))
-            row_specs = [(min_col, max_col) for row in range(min_row, max_row + 1)]
-            return min_row, max_row, row_specs
-        
-        if width == 1:
-            if length == 1:
-                return row0, row0, [(col0, col0)]
-            
-            if length <= 5 and abs(theta) <= 0.3:
-                # theta is very small, effectively 0
-                left_col = int(round(col0 - length/2))
-                right_col = int(round(left_col + length - 1))
-                left_col = max(left_col, 0)
-                right_col = min(right_col, n-1)
-                return row0, row0, [(left_col, right_col)]
-
-            b = length / 2
-            cos, sin = np.cos(theta), np.sin(theta)
-            
-            x2, y2 = b * cos, b * sin
-            x1, y1 = -x2, -y2
-
-            min_row = int(round(row0 + min(y1, y2)))
-            max_row = int(round(row0 + max(y1, y2))) - 1
-            if max_row == min_row - 1:
-                max_row = min_row
-            min_row = max(min_row, 0)
-            max_row = min(max_row, m - 1)
-
-            row_specs = []
-            true_min_row, true_max_row = 2*m, -2*m
-            for row in range(min_row, max_row + 1):
-                y = row - row0
-                x = (x2 - x1) / (y2 - y1) * (y - y1) + x1
-                col = int(round(x)) + col0
-                if 0 <= col < n-1:
-                    row_specs.append((col, col))
-                    if row < true_min_row:
-                        true_min_row = row
-                    if row > true_max_row:
-                        true_max_row = row
-
-            return true_min_row, true_max_row, row_specs
-
-        if theta < 0:
-            width, length = length, width
-            theta = np.pi/2 - (-theta)
-        
-        assert 0 < theta < np.pi/2
-
-        a, b = width/2, length/2
-        cos, sin = np.cos(theta), np.sin(theta)
-
-        x1 = -b * cos - a * sin
-        y1 = -b * sin + a * cos
-        x2 = b * cos - a * sin
-        y2 = b * sin + a * cos
-        x3 = -x2
-        y3 = -y2
-
-        def L(y):
-            if y1 <= y <= y2:
-                return (x2 - x1) / (y2 - y1) * (y - y1) + x1
-            return (x3 - x1) / (y3 - y1) * (y - y1) + x1
-
-        min_row = max(int(np.ceil(row0 + y3)), 0)
-        max_row = min(int(np.floor(row0 + y2)) - 1, m-1)
-
-        row_specs = []
-        true_min_row, true_max_row = 2*m, -2*m
-        for row in range(min_row, max_row + 1):
-            y = row - row0 + 0.001
-            x_left = int(round(L(y)))
-            min_col = max(col0 + x_left, 0)
-            x_right = int(round(-L(-y)))
-            max_col = min(col0 + x_right - 1, n-1)
-            if max_col >= 0:
-                if min_col <= max_col:
-                    row_specs.append((min_col, max_col))
-                    if row < true_min_row:
-                        true_min_row = row
-                    if row > true_max_row:
-                        true_max_row = row
-
-        return true_min_row, true_max_row, row_specs
+        return func(m, n, row0, col0, width, length, theta)
 
     @classmethod
     def generate_random_brush(cls, m, n, min_width, max_width, max_length):
@@ -924,19 +936,19 @@ def main():
             }
         ],
         'hillclimbing_params': {
-            'n_samples': 10,
-            'best_of_per_restart': 4,
+            'n_samples': 7,
+            'best_of_per_restart': 8,
             'n_opt_iter': 10,
-            'n_neighbors': 4,
+            'n_neighbors': 8,
             'stop_if_no_improvement': True
         },
-        'reuse_samples_start_iter': 200,
-        'n_queue': 300,
+        'reuse_samples_start_iter': 50,
+        'n_queue': 50,
         'max_n_pixels_regression': None
     }
 
-    pr = cProfile.Profile()
-    pr.enable()
+    # pr = cProfile.Profile()
+    # pr.enable()
 
     tm = datetime.datetime.now()
     folder_name = f'painting_{tm.year}-{tm.month:02}-{tm.day:02}T{tm.hour:02}_{tm.minute:02}_{tm.second:02}'
@@ -958,11 +970,11 @@ def main():
     time_taken_string = f"Time taken: {dt:.6f}s"
     print(time_taken_string)
 
-    pr.disable()
-    s = io.StringIO()
-    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
-    ps.print_stats(20)
-    print(s.getvalue())
+    # pr.disable()
+    # s = io.StringIO()
+    # ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+    # ps.print_stats(20)
+    # print(s.getvalue())
 
     with open(os.path.join(folder_name, 'time_taken.txt'), 'w+') as f:
         f.write(time_taken_string + '\n')
