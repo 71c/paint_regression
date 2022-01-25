@@ -752,13 +752,6 @@ class Painter:
             ############ Apply the brush ###########
             best_brush, best_loss, best_params = best_item.brush, best_item.loss, best_item.params
 
-            if best_brush._n_pixels > self._max_n_pixels_regression:
-                # re-evaluate the brush loss, without random sample
-                best_loss, best_params = self._evaluate_brush_loss(best_brush, random_sample=False)
-
-            if best_loss == np.inf:
-                print('A?')
-
             self._curr_loss += best_loss
             best_alpha, best_beta = best_params
             apply_brush(self._painting, best_brush, best_alpha, best_beta)
@@ -797,7 +790,7 @@ class Painter:
                     best_loss, best_params = self._evaluate_brush_loss(best_brush, random_sample=False)
 
                     if best_loss == np.inf:
-                        return None
+                        return self.paint_stroke()
 
                 self._curr_loss += best_loss
                 best_alpha, best_beta = best_params
@@ -936,15 +929,15 @@ def main():
             }
         ],
         'hillclimbing_params': {
-            'n_samples': 7,
-            'best_of_per_restart': 8,
+            'n_samples': 2,
+            'best_of_per_restart': 2,
             'n_opt_iter': 10,
-            'n_neighbors': 8,
+            'n_neighbors': 2,
             'stop_if_no_improvement': True
         },
         'reuse_samples_start_iter': 50,
         'n_queue': 50,
-        'max_n_pixels_regression': None
+        'max_n_pixels_regression': 1000
     }
 
     # pr = cProfile.Profile()
@@ -963,8 +956,9 @@ def main():
             d['class'] = d['class'].__name__
         json.dump(params_copy, f, indent=4)
 
+    save_every = 5000
     t0 = time()
-    painting, loss = make_painting(params['brushes'], params['hillclimbing_params'], params['reuse_samples_start_iter'], src_image=arr, n_iter=params['n_iter'], n_queue=params['n_queue'], max_n_pixels_regression=params['max_n_pixels_regression'], save_every=50, folder_name=folder_name)
+    painting, loss = make_painting(params['brushes'], params['hillclimbing_params'], params['reuse_samples_start_iter'], src_image=arr, n_iter=params['n_iter'], n_queue=params['n_queue'], max_n_pixels_regression=params['max_n_pixels_regression'], save_every=save_every, folder_name=folder_name)
     dt = time() - t0
 
     time_taken_string = f"Time taken: {dt:.6f}s"
