@@ -34,23 +34,6 @@ def get_max_beta_for_zero_sxy_and_sxx(mx, my):
 def get_least_squares_paint_regression_coefs_from_stats(mx, my, sxx, sxy):
     # Solves beta * sxx == sxy
 
-    # if np.isclose(sxy, 0, rtol = 0.0, atol=1e-8):
-    #     if sxx == 0:
-    #         # sxy == 0, sxx == 0
-    #         # beta can be anything
-    #         max_beta = get_max_beta_for_zero_sxy_and_sxx(mx, my)
-    #         beta = max_beta / 2
-    #     else:
-    #         # sxy == 0, sxx != 0
-    #         # beta must be 0
-    #         beta = 0.0
-    # elif sxx == 0:
-    #     # sxy != 0, sxx == 0
-    #     raise RuntimeError(f"no solution to regression {sxx} {sxy}")
-    # else:
-    #     # sxy != 0, sxx != 0
-    #     beta = sxy / sxx
-
     if sxx == 0:
         # Assume that sxy == 0
         max_beta = get_max_beta_for_zero_sxy_and_sxx(mx, my)
@@ -73,24 +56,23 @@ def get_least_squares_paint_regression_coefs(x, y):
         y: array of shape (m, n): list of example y
     Returns: a tuple (mx, my, sxx, sxy, alpha, beta)'''
 
-    x = np.array(x)
-    y = np.array(y)
     assert len(x.shape) == len(y.shape) == 2
     assert x.shape == y.shape
     m, n = x.shape
     
     assert m >= 1
 
-    if m == 1:
-        return y[0], 0.0
-    
     mx = x.mean(axis=0)
     my = y.mean(axis=0)
 
     sxy = np.sum(x * y) - m * np.sum(mx * my)
     sxx = np.sum(x**2) - m * np.sum(mx**2)
 
-    alpha, beta = get_least_squares_paint_regression_coefs_from_stats(mx, my, sxx, sxy)
+    if m == 1:
+        alpha, beta = y[0], 0.0
+    else:
+        alpha, beta = get_least_squares_paint_regression_coefs_from_stats(mx, my, sxx, sxy)
+    
     return mx, my, sxx, sxy, alpha, beta
 
 
@@ -132,21 +114,15 @@ class CircleBrush(Brush):
         min_row = max(row0 - radius, 0)
         max_row = min(row0 + radius, m - 1)
 
-        row_specs = []
-        for row in range(min_row, max_row + 1):
-            row_diff = (row - row0) / radius * (radius - 0.5)
-
-            this_row_brush_radius = np.sqrt(radius**2 - row_diff**2)
-
-            min_col = int(round(col0 - this_row_brush_radius))
-            min_col = max(0, min_col)
-            max_col = int(round(col0 + this_row_brush_radius))
-            max_col = min(n - 1, max_col)
-
-            row_specs.append((min_col, max_col))
+        rows = np.arange(min_row, max_row + 1)
+        row_diffs = (rows - row0) / radius * (radius - 0.5)
+        brush_radii = np.sqrt(radius**2 - row_diffs**2)
+        min_cols = np.fmax(0, np.around(col0 - brush_radii).astype(int))
+        max_cols = np.fmin(n-1, np.around(col0 + brush_radii).astype(int))
+        row_specs = [(min_cols[i], max_cols[i]) for i in range(max_row - min_row + 1)]
 
         return min_row, max_row, row_specs
-    
+
     @classmethod
     def generate_random_brush(cls, m, n, min_radius, max_radius):
         row = np.random.randint(0, m)
@@ -522,9 +498,8 @@ class Painter:
             hillclimbing_params: a dictionary (with keys as strings) specifying
                 the parameters to be used for the hill climbing optimization
                 algorithm. These parameters are:
-                    n_samples: the number of restarts to do if reuse_samples is
-                        False, or the number of samples to keep track of if
-                        reuse_samples is True
+                    n_samples: the number of restarts to do when
+                        iter < reuse_samples_start_iter
                     best_of_per_restart: When generating initial sample brush
                         parameters to be further optimized by hillclimbing, get
                         this many random samples of brush parameters and pick
@@ -710,7 +685,7 @@ class Painter:
             if loss == np.inf:
                 return self._get_new_item(brush_type, random_brush_func)
 
-        return brush, loss, params
+        return self.PrioritizedBrush(loss=loss, brush=brush, params=params)
 
     def get_intersection_avoiding_random_brush_func(self, random_brush_func):
         self._items.sort()
@@ -728,14 +703,11 @@ class Painter:
     def _add_random_brush(self):
         brush_type = random.choice(self._brush_types)
 
-
-        brush, loss, params = self._get_new_item(brush_type)
+        item = self._get_new_item(brush_type)
 
         # random_brush_func = self.get_intersection_avoiding_random_brush_func(self._brush_type_to_random_brush_func[brush_type])
         # brush, loss, params = self._get_new_item(brush_type, random_brush_func)
 
-
-        item = self.PrioritizedBrush(loss=loss, brush=brush, params=params)
         self._add_item(item)
 
     def paint_stroke(self):
@@ -753,10 +725,9 @@ class Painter:
                 best_params = None
                 for _ in trange(self._n_queue):
                     for brush_type in self._brush_types:
-                        brush, loss, params = self._get_new_item(brush_type)
-                        item = self.PrioritizedBrush(loss=loss, brush=brush, params=params)
+                        item = self._get_new_item(brush_type)
                         self._add_item(item)
-
+                        loss, params = item.loss, item.params
                         if loss < best_loss:
                             best_loss = loss
                             best_params = params
@@ -813,11 +784,14 @@ class Painter:
                     # re-evaluate the brush loss, without random sample
                     best_loss, best_params = self._evaluate_brush_loss(best_brush, random_sample=False)
 
+                    if best_loss == np.inf:
+                        return None
+
                 self._curr_loss += best_loss
                 best_alpha, best_beta = best_params
                 apply_brush(self._painting, best_brush, best_alpha, best_beta)
 
-            self._n_iters += 1
+                self._n_iters += 1
 
             return best_brush
 
