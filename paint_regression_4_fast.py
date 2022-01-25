@@ -12,8 +12,12 @@ from dataclasses import dataclass, field
 from typing import Any
 from copy import deepcopy
 import random
+from numba import jit
+import threading
+import concurrent.futures
 
 
+@jit(nopython=True)
 def get_max_beta_for_zero_sxy_and_sxx(mx, my):
     n = len(mx)
     max_beta = 1.0
@@ -31,25 +35,9 @@ def get_max_beta_for_zero_sxy_and_sxx(mx, my):
     return max_beta
 
 
+@jit(nopython=True)
 def get_least_squares_paint_regression_coefs_from_stats(mx, my, sxx, sxy):
     # Solves beta * sxx == sxy
-
-    # if np.isclose(sxy, 0, rtol = 0.0, atol=1e-8):
-    #     if sxx == 0:
-    #         # sxy == 0, sxx == 0
-    #         # beta can be anything
-    #         max_beta = get_max_beta_for_zero_sxy_and_sxx(mx, my)
-    #         beta = max_beta / 2
-    #     else:
-    #         # sxy == 0, sxx != 0
-    #         # beta must be 0
-    #         beta = 0.0
-    # elif sxx == 0:
-    #     # sxy != 0, sxx == 0
-    #     raise RuntimeError(f"no solution to regression {sxx} {sxy}")
-    # else:
-    #     # sxy != 0, sxx != 0
-    #     beta = sxy / sxx
 
     if sxx == 0:
         # Assume that sxy == 0
@@ -73,24 +61,23 @@ def get_least_squares_paint_regression_coefs(x, y):
         y: array of shape (m, n): list of example y
     Returns: a tuple (mx, my, sxx, sxy, alpha, beta)'''
 
-    x = np.array(x)
-    y = np.array(y)
     assert len(x.shape) == len(y.shape) == 2
     assert x.shape == y.shape
     m, n = x.shape
     
     assert m >= 1
 
-    if m == 1:
-        return y[0], 0.0
-    
     mx = x.mean(axis=0)
     my = y.mean(axis=0)
 
     sxy = np.sum(x * y) - m * np.sum(mx * my)
     sxx = np.sum(x**2) - m * np.sum(mx**2)
 
-    alpha, beta = get_least_squares_paint_regression_coefs_from_stats(mx, my, sxx, sxy)
+    if m == 1:
+        alpha, beta = y[0], 0.0
+    else:
+        alpha, beta = get_least_squares_paint_regression_coefs_from_stats(mx, my, sxx, sxy)
+    
     return mx, my, sxx, sxy, alpha, beta
 
 
@@ -100,6 +87,20 @@ class Brush:
         x1_O, x2_O, y1_O, y2_O = other.get_min_and_max_coords()
 
         return not (x2 < x1_O or x2_O < x1 or y2 < y1_O or y2_O < y1)
+
+
+def func2(m, n, row0, col0, radius):
+    min_row = max(row0 - radius, 0)
+    max_row = min(row0 + radius, m - 1)
+
+    rows = np.arange(min_row, max_row + 1)
+    row_diffs = (rows - row0) / radius * (radius - 0.5)
+    brush_radii = np.sqrt(radius**2 - row_diffs**2)
+    min_cols = np.fmax(0, np.around(col0 - brush_radii).astype(int))
+    max_cols = np.fmin(n-1, np.around(col0 + brush_radii).astype(int))
+    row_specs = [(min_cols[i], max_cols[i]) for i in range(max_row - min_row + 1)]
+
+    return min_row, max_row, row_specs
 
 
 class CircleBrush(Brush):
@@ -129,23 +130,7 @@ class CircleBrush(Brush):
 
     def _get_boundary_rows_helper(self, m, n):
         row0, col0, radius = self._row0, self._col0, self._radius
-        min_row = max(row0 - radius, 0)
-        max_row = min(row0 + radius, m - 1)
-
-        row_specs = []
-        for row in range(min_row, max_row + 1):
-            row_diff = (row - row0) / radius * (radius - 0.5)
-
-            this_row_brush_radius = np.sqrt(radius**2 - row_diff**2)
-
-            min_col = int(round(col0 - this_row_brush_radius))
-            min_col = max(0, min_col)
-            max_col = int(round(col0 + this_row_brush_radius))
-            max_col = min(n - 1, max_col)
-
-            row_specs.append((min_col, max_col))
-
-        return min_row, max_row, row_specs
+        return func2(m, n, row0, col0, radius)
     
     @classmethod
     def generate_random_brush(cls, m, n, min_radius, max_radius):
@@ -187,6 +172,118 @@ class CircleBrush(Brush):
         return f"CircleBrush(row={self._row0}, col={self._col0}, radius={self._radius})"
 
 
+@jit(nopython=True)
+def func(m, n, row0, col0, width, length, theta):
+    assert width >= 1
+    assert length >= 1
+
+    if theta == np.pi/2 or theta == -np.pi/2:
+        width, length = length, width
+        theta = 0
+    
+    if theta == 0:
+        min_row = int(max(row0 - width/2, 0))
+        max_row = int(min(row0 + width/2 - 1, m-1))
+        min_col = int(max(col0 - length/2, 0))
+        max_col = int(min(col0 + length/2 - 1, n-1))
+        row_specs = [(min_col, max_col) for row in range(min_row, max_row + 1)]
+        return min_row, max_row, row_specs
+    
+    if width == 1:
+        if length == 1:
+            return row0, row0, [(col0, col0)]
+        
+        if length <= 5 and abs(theta) <= 0.3:
+            # theta is very small, effectively 0
+            left_col = int(round(col0 - length/2))
+            right_col = int(round(left_col + length - 1))
+            left_col = max(left_col, 0)
+            right_col = min(right_col, n-1)
+            return row0, row0, [(left_col, right_col)]
+
+        b = length / 2
+        cos, sin = np.cos(theta), np.sin(theta)
+        
+        x2, y2 = b * cos, b * sin
+        x1, y1 = -x2, -y2
+
+        min_row = int(round(row0 + min(y1, y2)))
+        max_row = int(round(row0 + max(y1, y2))) - 1
+        if max_row == min_row - 1:
+            max_row = min_row
+        min_row = max(min_row, 0)
+        max_row = min(max_row, m - 1)
+
+        row_specs = []
+        true_min_row, true_max_row = 2*m, -2*m
+        for row in range(min_row, max_row + 1):
+            y = row - row0
+            x = (x2 - x1) / (y2 - y1) * (y - y1) + x1
+            col = int(round(x)) + col0
+            if 0 <= col < n-1:
+                row_specs.append((col, col))
+                if row < true_min_row:
+                    true_min_row = row
+                if row > true_max_row:
+                    true_max_row = row
+
+        return true_min_row, true_max_row, row_specs
+
+    if theta < 0:
+        width, length = length, width
+        theta = np.pi/2 - (-theta)
+    
+    assert 0 < theta < np.pi/2
+
+    a, b = width/2, length/2
+    cos, sin = np.cos(theta), np.sin(theta)
+
+    x1 = -b * cos - a * sin
+    y1 = -b * sin + a * cos
+    x2 = b * cos - a * sin
+    y2 = b * sin + a * cos
+    x3 = -x2
+    y3 = -y2
+
+    # def L(y):
+    #     if y1 <= y <= y2:
+    #         return (x2 - x1) / (y2 - y1) * (y - y1) + x1
+    #     return (x3 - x1) / (y3 - y1) * (y - y1) + x1
+
+    min_row = max(int(np.ceil(row0 + y3)), 0)
+    max_row = min(int(np.floor(row0 + y2)) - 1, m-1)
+
+    row_specs = []
+    true_min_row, true_max_row = 2*m, -2*m
+    for row in range(min_row, max_row + 1):
+        y = row - row0 + 0.001
+
+        # x_left = int(round(L(y)))
+        # x_right = int(round(-L(-y)))
+
+        if y1 <= y <= y2:
+            x_left = int(round((x2 - x1) / (y2 - y1) * (y - y1) + x1))
+        else:
+            x_left = int(round((x3 - x1) / (y3 - y1) * (y - y1) + x1))
+        
+        if y1 <= -y <= y2:
+            x_right = int(round(-((x2 - x1) / (y2 - y1) * (-y - y1) + x1)))
+        else:
+            x_right = int(round(-((x3 - x1) / (y3 - y1) * (-y - y1) + x1)))
+
+        min_col = max(col0 + x_left, 0)
+        max_col = min(col0 + x_right - 1, n-1)
+        if max_col >= 0:
+            if min_col <= max_col:
+                row_specs.append((min_col, max_col))
+                if row < true_min_row:
+                    true_min_row = row
+                if row > true_max_row:
+                    true_max_row = row
+
+    return true_min_row, true_max_row, row_specs
+
+
 class RectangleBrush(Brush):
     def __init__(self, row, col, width, length, angle):
         assert -np.pi/2 <= angle <= np.pi/2
@@ -209,102 +306,7 @@ class RectangleBrush(Brush):
     
     def _get_boundary_rows_helper(self, m, n):
         row0, col0, width, length, theta = self._row0, self._col0, self._width, self._length, self._angle
-        assert width >= 1
-        assert length >= 1
-
-        if theta == np.pi/2 or theta == -np.pi/2:
-            width, length = length, width
-            theta = 0
-        
-        if theta == 0:
-            min_row = int(max(row0 - width/2, 0))
-            max_row = int(min(row0 + width/2 - 1, m-1))
-            min_col = int(max(col0 - length/2, 0))
-            max_col = int(min(col0 + length/2 - 1, n-1))
-            row_specs = [(min_col, max_col) for row in range(min_row, max_row + 1)]
-            return min_row, max_row, row_specs
-        
-        if width == 1:
-            if length == 1:
-                return row0, row0, [(col0, col0)]
-            
-            if length <= 5 and abs(theta) <= 0.3:
-                # theta is very small, effectively 0
-                left_col = int(round(col0 - length/2))
-                right_col = int(round(left_col + length - 1))
-                left_col = max(left_col, 0)
-                right_col = min(right_col, n-1)
-                return row0, row0, [(left_col, right_col)]
-
-            b = length / 2
-            cos, sin = np.cos(theta), np.sin(theta)
-            
-            x2, y2 = b * cos, b * sin
-            x1, y1 = -x2, -y2
-
-            min_row = int(round(row0 + min(y1, y2)))
-            max_row = int(round(row0 + max(y1, y2))) - 1
-            if max_row == min_row - 1:
-                max_row = min_row
-            min_row = max(min_row, 0)
-            max_row = min(max_row, m - 1)
-
-            row_specs = []
-            true_min_row, true_max_row = 2*m, -2*m
-            for row in range(min_row, max_row + 1):
-                y = row - row0
-                x = (x2 - x1) / (y2 - y1) * (y - y1) + x1
-                col = int(round(x)) + col0
-                if 0 <= col < n-1:
-                    row_specs.append((col, col))
-                    if row < true_min_row:
-                        true_min_row = row
-                    if row > true_max_row:
-                        true_max_row = row
-
-            return true_min_row, true_max_row, row_specs
-
-        if theta < 0:
-            width, length = length, width
-            theta = np.pi/2 - (-theta)
-        
-        assert 0 < theta < np.pi/2
-
-        a, b = width/2, length/2
-        cos, sin = np.cos(theta), np.sin(theta)
-
-        x1 = -b * cos - a * sin
-        y1 = -b * sin + a * cos
-        x2 = b * cos - a * sin
-        y2 = b * sin + a * cos
-        x3 = -x2
-        y3 = -y2
-
-        def L(y):
-            if y1 <= y <= y2:
-                return (x2 - x1) / (y2 - y1) * (y - y1) + x1
-            return (x3 - x1) / (y3 - y1) * (y - y1) + x1
-
-        min_row = max(int(np.ceil(row0 + y3)), 0)
-        max_row = min(int(np.floor(row0 + y2)) - 1, m-1)
-
-        row_specs = []
-        true_min_row, true_max_row = 2*m, -2*m
-        for row in range(min_row, max_row + 1):
-            y = row - row0 + 0.001
-            x_left = int(round(L(y)))
-            min_col = max(col0 + x_left, 0)
-            x_right = int(round(-L(-y)))
-            max_col = min(col0 + x_right - 1, n-1)
-            if max_col >= 0:
-                if min_col <= max_col:
-                    row_specs.append((min_col, max_col))
-                    if row < true_min_row:
-                        true_min_row = row
-                    if row > true_max_row:
-                        true_max_row = row
-
-        return true_min_row, true_max_row, row_specs
+        return func(m, n, row0, col0, width, length, theta)
 
     @classmethod
     def generate_random_brush(cls, m, n, min_width, max_width, max_length):
@@ -522,9 +524,8 @@ class Painter:
             hillclimbing_params: a dictionary (with keys as strings) specifying
                 the parameters to be used for the hill climbing optimization
                 algorithm. These parameters are:
-                    n_samples: the number of restarts to do if reuse_samples is
-                        False, or the number of samples to keep track of if
-                        reuse_samples is True
+                    n_samples: the number of restarts to do when
+                        iter < reuse_samples_start_iter
                     best_of_per_restart: When generating initial sample brush
                         parameters to be further optimized by hillclimbing, get
                         this many random samples of brush parameters and pick
@@ -600,6 +601,8 @@ class Painter:
 
         self._max_n_pixels_regression = np.inf if max_n_pixels_regression is None else max_n_pixels_regression
 
+        # self._executor = concurrent.futures.ThreadPoolExecutor(4)
+
     def _evaluate_brush_loss(self, brush, random_sample=True):
         m = self._m
         n = self._n
@@ -612,7 +615,7 @@ class Painter:
 
         painting_brush_rows = []
         arr_brush_rows = []
-        
+
         for row, (min_col, max_col) in zip(rows, row_specs):
             painting_brush_rows.append(painting[row, min_col : max_col + 1])
             arr_brush_rows.append(arr[row, min_col : max_col + 1])
@@ -703,14 +706,14 @@ class Painter:
                 n_opt_iter=self._n_opt_iter,
                 n_neighbors=self._n_neighbors,
                 stop_if_no_improvement=self._stop_if_no_improvement)
-        
+
         if brush._n_pixels > self._max_n_pixels_regression:
             # re-evaluate the brush loss, without random sample
             loss, params = self._evaluate_brush_loss(brush, random_sample=False)
             if loss == np.inf:
                 return self._get_new_item(brush_type, random_brush_func)
 
-        return brush, loss, params
+        return self.PrioritizedBrush(loss=loss, brush=brush, params=params)
 
     def get_intersection_avoiding_random_brush_func(self, random_brush_func):
         self._items.sort()
@@ -728,15 +731,16 @@ class Painter:
     def _add_random_brush(self):
         brush_type = random.choice(self._brush_types)
 
-
-        brush, loss, params = self._get_new_item(brush_type)
+        item = self._get_new_item(brush_type)
 
         # random_brush_func = self.get_intersection_avoiding_random_brush_func(self._brush_type_to_random_brush_func[brush_type])
-        # brush, loss, params = self._get_new_item(brush_type, random_brush_func)
+        # item = self._get_new_item(brush_type, random_brush_func)
 
-
-        item = self.PrioritizedBrush(loss=loss, brush=brush, params=params)
         self._add_item(item)
+    
+    def _add_n_brushes(self, n):
+        for _ in range(n):
+            self._add_random_brush()
 
     def paint_stroke(self):
         reuse_samples = self._n_iters + 1 >= self._reuse_samples_start_iter
@@ -749,17 +753,31 @@ class Painter:
                 # If queue not initialized yet, we need to do that
                 # initialize the queue and keep track of the best brush params
                 print("Initializing queue...")
+                t0 = time()
                 best_loss = np.inf
                 best_params = None
                 for _ in trange(self._n_queue):
                     for brush_type in self._brush_types:
-                        brush, loss, params = self._get_new_item(brush_type)
-                        item = self.PrioritizedBrush(loss=loss, brush=brush, params=params)
+                        item = self._get_new_item(brush_type)
                         self._add_item(item)
-
+                        loss, params = item.loss, item.params
                         if loss < best_loss:
                             best_loss = loss
                             best_params = params
+                print(f"Took {time() - t0} seconds")
+                
+                # t0 = time()
+                # brush_types = [brush_type for _ in range(self._n_queue) for brush_type in self._brush_types]
+                # result = self._executor.map(self._get_new_item, brush_types)
+                # best_loss = np.inf
+                # best_params = None
+                # for item in result:
+                #     self._add_item(item)
+                #     loss, params = item.loss, item.params
+                #     if loss < best_loss:
+                #         best_loss = loss
+                #         best_params = params
+                # print(f"Took {time() - t0} seconds")
 
                 self._queue_initialized = True
 
@@ -787,8 +805,71 @@ class Painter:
             # rg = trange(n_to_add)
             # print(n_to_add)
             rg = range(n_to_add)
+
             for _ in rg:
                 self._add_random_brush()
+
+            # threads = []
+            # for _ in rg:
+            #     t = threading.Thread(group=None, target=self._add_random_brush)
+            #     t.start()
+            #     threads.append(t)
+            # for t in threads:
+            #     t.join()
+
+            # per_thread = 20
+            # n_threads = n_to_add // per_thread
+            # threads = []
+            # for _ in range(n_threads):
+            #     threads.append(threading.Thread(group=None, target=self._add_n_brushes, args=(per_thread,)))
+            # n_extra = n_to_add - n_threads * per_thread
+            # if n_extra != 0:
+            #     threads.append(threading.Thread(group=None, target=self._add_n_brushes, args=(n_extra,)))
+            # for t in threads:
+            #     t.start()
+            # for t in threads:
+            #     t.join()
+
+            # res = self._executor.map(self._add_n_brushes, [1 for _ in range(n_to_add)])
+            # concurrent.futures.wait(res)
+            # print(len(self._items))
+            
+
+
+            # futures = []
+            # for _ in range(n_to_add):
+            #     future = self._executor.submit(self._add_random_brush)
+            #     futures.append(future)
+            # concurrent.futures.wait(futures)
+            # print(len(self._items))
+
+            ##### should be good...
+            # per_thread = 20
+            # n_threads = n_to_add // per_thread
+            # ns = []
+            # for _ in range(n_threads):
+            #     ns.append(per_thread)
+            # n_extra = n_to_add - n_threads * per_thread
+            # if n_extra != 0:
+            #     ns.append(n_extra)
+            # futures = []
+            # for num in ns:
+            #     future = self._executor.submit(self._add_n_brushes, num)
+            #     futures.append(future)
+            # concurrent.futures.wait(futures)
+            # print(len(self._items))
+
+
+            # per_thread = 20
+            # n_threads = n_to_add // per_thread
+            # threads = []
+            # for _ in range(n_threads):
+            #     threads.append(per_thread)
+            # n_extra = n_to_add - n_threads * per_thread
+            # if n_extra != 0:
+            #     threads.append(n_extra)
+            # self._executor.map(self._add_n_brushes, threads)
+
 
             ########## Put a new brush back in queue ###########
             self._add_random_brush()
@@ -812,12 +893,15 @@ class Painter:
                 if best_brush._n_pixels > self._max_n_pixels_regression:
                     # re-evaluate the brush loss, without random sample
                     best_loss, best_params = self._evaluate_brush_loss(best_brush, random_sample=False)
+                
+                    if best_loss == np.inf:
+                        return None
 
                 self._curr_loss += best_loss
                 best_alpha, best_beta = best_params
                 apply_brush(self._painting, best_brush, best_alpha, best_beta)
 
-            self._n_iters += 1
+                self._n_iters += 1
 
             return best_brush
 
@@ -874,8 +958,59 @@ def main():
         arr = arr[:, :, :3] # remove alpha channel if there is one
     arr = arr / 255 # normalize to be between 0 and 1
 
+    params = {
+        'n_iter': 10_000,
+        'brushes': [
+            {
+                'class': CircleBrush,
+                'random_sample_params': {},
+                'neighbor_params': {
+                    'brush_position_delta': 20,
+                    'radius_change_factor': 1.05
+                },
+                'size_bounds': {
+                    'min_radius': 1,
+                    'max_radius': 100
+                }
+            },
+            {
+                'class': RectangleBrush,
+                'random_sample_params': {},
+                'neighbor_params': {
+                    'brush_position_delta': 20,
+                    'angle_delta': np.pi/9,
+                    'width_change_factor': 1.05,
+                    'length_change_factor': 1.05
+                },
+                'size_bounds': {
+                    'min_width': 2,
+                    'max_width': 105,
+                    'max_length': 300
+                }
+            }
+        ],
+        # 'hillclimbing_params': {
+        #     'n_samples': 1,
+        #     'best_of_per_restart': 20,
+        #     'n_opt_iter': 6,
+        #     'n_neighbors': 3,
+        #     'stop_if_no_improvement': False
+        # },
+        'hillclimbing_params': {
+            'n_samples': 10,
+            'best_of_per_restart': 20,
+            'n_opt_iter': 20,
+            'n_neighbors': 15,
+            'stop_if_no_improvement': True
+        },
+        'reuse_samples_start_iter': 100,
+        'n_queue': 500,
+        'max_n_pixels_regression': 7_000
+    }
+
+    # parameters for testing
     # params = {
-    #     'n_iter': 50_000,
+    #     'n_iter': 100,
     #     'brushes': [
     #         {
     #             'class': CircleBrush,
@@ -906,63 +1041,19 @@ def main():
     #         }
     #     ],
     #     'hillclimbing_params': {
-    #         'n_samples': 20,
-    #         'best_of_per_restart': 20,
-    #         'n_opt_iter': 20,
-    #         'n_neighbors': 15,
+    #         'n_samples': 10,
+    #         'best_of_per_restart': 4,
+    #         'n_opt_iter': 10,
+    #         'n_neighbors': 4,
     #         'stop_if_no_improvement': True
     #     },
-    #     'reuse_samples_start_iter': 100,
-    #     'n_queue': 500,
-    #     'max_n_pixels_regression': 5_000
+    #     'reuse_samples_start_iter': 200,
+    #     'n_queue': 300,
+    #     'max_n_pixels_regression': None
     # }
 
-    # parameters for testing
-    params = {
-        'n_iter': 100,
-        'brushes': [
-            {
-                'class': CircleBrush,
-                'random_sample_params': {},
-                'neighbor_params': {
-                    'brush_position_delta': 20,
-                    'radius_change_factor': 1.05
-                },
-                'size_bounds': {
-                    'min_radius': 1,
-                    'max_radius': 100
-                }
-            },
-            {
-                'class': RectangleBrush,
-                'random_sample_params': {},
-                'neighbor_params': {
-                    'brush_position_delta': 20,
-                    'angle_delta': np.pi/9,
-                    'width_change_factor': 1.05,
-                    'length_change_factor': 1.05
-                },
-                'size_bounds': {
-                    'min_width': 2,
-                    'max_width': 105,
-                    'max_length': 300
-                }
-            }
-        ],
-        'hillclimbing_params': {
-            'n_samples': 10,
-            'best_of_per_restart': 4,
-            'n_opt_iter': 10,
-            'n_neighbors': 4,
-            'stop_if_no_improvement': True
-        },
-        'reuse_samples_start_iter': 200,
-        'n_queue': 300,
-        'max_n_pixels_regression': None
-    }
-
-    pr = cProfile.Profile()
-    pr.enable()
+    # pr = cProfile.Profile()
+    # pr.enable()
 
     tm = datetime.datetime.now()
     folder_name = f'painting_{tm.year}-{tm.month:02}-{tm.day:02}T{tm.hour:02}_{tm.minute:02}_{tm.second:02}'
@@ -984,11 +1075,11 @@ def main():
     time_taken_string = f"Time taken: {dt:.6f}s"
     print(time_taken_string)
 
-    pr.disable()
-    s = io.StringIO()
-    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
-    ps.print_stats(20)
-    print(s.getvalue())
+    # pr.disable()
+    # s = io.StringIO()
+    # ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+    # ps.print_stats(50)
+    # print(s.getvalue())
 
     with open(os.path.join(folder_name, 'time_taken.txt'), 'w+') as f:
         f.write(time_taken_string + '\n')
