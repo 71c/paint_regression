@@ -628,15 +628,13 @@ class Painter:
 
         # Calculate the loss. Equivalent to calculating the following:
         #    np.sum((alpha + beta * X - Y)**2) - np.sum((X - Y)**2)
-        original_err_2 = sxx - 2 * sxy + N * np.sum((mx - my)**2)
-        new_err_2 = beta**2 * sxx - 2 * beta * sxy
-        loss = new_err_2 - original_err_2
+        loss = -(beta - 1)**2 * sxx - N * np.sum((mx - my)**2)
 
         if random_sample and original_n_pixels > self._max_n_pixels_regression:
             loss = loss / N * original_n_pixels
 
         return loss, (alpha, beta)
-    
+
     def _apply_brush(self, brush, alpha, beta):
         painting = self._painting
         m, n = self._m, self._n
