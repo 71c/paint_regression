@@ -554,61 +554,28 @@ class Painter:
 
         if self._use_brush_approximation:
             # Initialize these for use by approximation method
-            
             print('Initializing squares values')
-            
-            # sxys = np.empty((m_squares, n_squares))
-            # sxxs = np.empty((m_squares, n_squares))
-            # xbars = np.empty((m_squares, n_squares, c))
-            # ybars = np.empty((m_squares, n_squares, c))
-            # row = 0
-            # for i in trange(m_squares):
-            #     col = 0
-            #     for j in range(n_squares):
-            #         X_section = init_painting[row:row+y_res, col:col+x_res]
-            #         Y_section = src_image[row:row+y_res, col:col+x_res]
-
-            #         xbar = X_section.mean(axis=(0, 1))
-            #         ybar = Y_section.mean(axis=(0, 1))
-            #         xbars[i, j] = xbar
-            #         ybars[i, j] = ybar
-
-            #         xdiff, ydiff = X_section - xbar, Y_section - ybar
-            #         sxxs[i, j] = np.sum(xdiff**2)
-            #         sxys[i, j] = np.sum(xdiff * ydiff)
-
-            #         col += x_res
-            #     row += y_res
-
-
-            sxys = np.empty((m_squares, n_squares))
-            sxxs = np.empty((m_squares, n_squares))
-            xbars = np.empty((m_squares, n_squares, c))
-            ybars = np.empty((m_squares, n_squares, c))
-            X_sections = np.empty((n_squares, y_res, x_res, c))
-            Y_sections = np.empty((n_squares, y_res, x_res, c))
+            t0 = time()
+            X_sections = np.empty((m_squares, n_squares, y_res, x_res, c))
+            Y_sections = np.empty((m_squares, n_squares, y_res, x_res, c))
             row = 0
-            for i in trange(m_squares):
+            for i in range(m_squares):
                 col = 0
                 for j in range(n_squares):
-                    X_sections[j] = init_painting[row:row+y_res, col:col+x_res]
-                    Y_sections[j] = src_image[row:row+y_res, col:col+x_res]
+                    X_sections[i, j] = init_painting[row:row+y_res, col:col+x_res]
+                    Y_sections[i, j] = src_image[row:row+y_res, col:col+x_res]
                     col += x_res
-
-                xbars_ = X_sections.mean(axis=(1, 2))
-                ybars_ = Y_sections.mean(axis=(1, 2))
-                xbars[i] = xbars_
-                ybars[i] = ybars_
-                
-                xdiffs, ydiffs = X_sections - xbars_[:, None, None, :], Y_sections - ybars_[:, None, None, :]
-                sxxs[i] = np.sum(xdiffs**2, axis=(1, 2, 3))
-                sxys[i] = np.sum(xdiffs * ydiffs, axis=(1, 2, 3))
-
                 row += y_res
 
+            xbars = X_sections.mean(axis=(2, 3))
+            ybars = Y_sections.mean(axis=(2, 3))
 
-            self._sxys = sxys
-            self._sxxs = sxxs
+            xdiffs = X_sections - xbars[:, :, None, None, :]
+            ydiffs = Y_sections - ybars[:, :, None, None, :]
+            self._sxxs = np.sum(xdiffs**2, axis=(2, 3, 4))
+            self._sxys = np.sum(xdiffs * ydiffs, axis=(2, 3, 4))
+            print(f'Initializing squares values took {time() - t0} seconds')
+
             self._xbars = xbars
             self._ybars = ybars
 
@@ -1031,51 +998,6 @@ def main():
     # }
 
     # parameters for testing
-    params = {
-        'n_iter': 100,
-        'brushes': [
-            {
-                'class': CircleBrush,
-                'random_sample_params': {},
-                'neighbor_params': {
-                    'brush_position_delta': 20,
-                    'radius_change_factor': 1.05
-                },
-                'size_bounds': {
-                    'min_radius': 1,
-                    'max_radius': 100
-                }
-            },
-            {
-                'class': RectangleBrush,
-                'random_sample_params': {},
-                'neighbor_params': {
-                    'brush_position_delta': 20,
-                    'angle_delta': np.pi/9,
-                    'width_change_factor': 1.05,
-                    'length_change_factor': 1.05
-                },
-                'size_bounds': {
-                    'min_width': 2,
-                    'max_width': 105,
-                    'max_length': 300
-                }
-            }
-        ],
-        'hillclimbing_params': {
-            'n_samples': 10,
-            'best_of_per_restart': 20,
-            'n_opt_iter': 10,
-            'n_neighbors': 5,
-            'stop_if_no_improvement': True
-        },
-        'reuse_samples_start_iter': 50,
-        'n_queue': 50,
-        'max_n_pixels_regression': None,
-        'x_res': 1,
-        'y_res': 1
-    }
-
     # params = {
     #     'n_iter': 100,
     #     'brushes': [
@@ -1083,27 +1005,27 @@ def main():
     #             'class': CircleBrush,
     #             'random_sample_params': {},
     #             'neighbor_params': {
-    #                 'brush_position_delta': 5,
+    #                 'brush_position_delta': 20,
     #                 'radius_change_factor': 1.05
     #             },
     #             'size_bounds': {
     #                 'min_radius': 1,
-    #                 'max_radius': 25
+    #                 'max_radius': 100
     #             }
     #         },
     #         {
     #             'class': RectangleBrush,
     #             'random_sample_params': {},
     #             'neighbor_params': {
-    #                 'brush_position_delta': 5,
+    #                 'brush_position_delta': 20,
     #                 'angle_delta': np.pi/9,
     #                 'width_change_factor': 1.05,
     #                 'length_change_factor': 1.05
     #             },
     #             'size_bounds': {
     #                 'min_width': 2,
-    #                 'max_width': 26,
-    #                 'max_length': 75
+    #                 'max_width': 105,
+    #                 'max_length': 300
     #             }
     #         }
     #     ],
@@ -1117,9 +1039,54 @@ def main():
     #     'reuse_samples_start_iter': 50,
     #     'n_queue': 50,
     #     'max_n_pixels_regression': None,
-    #     'x_res': 4,
-    #     'y_res': 4
+    #     'x_res': 1,
+    #     'y_res': 1
     # }
+
+    params = {
+        'n_iter': 300,
+        'brushes': [
+            {
+                'class': CircleBrush,
+                'random_sample_params': {},
+                'neighbor_params': {
+                    'brush_position_delta': 5,
+                    'radius_change_factor': 1.05
+                },
+                'size_bounds': {
+                    'min_radius': 1,
+                    'max_radius': 25
+                }
+            },
+            {
+                'class': RectangleBrush,
+                'random_sample_params': {},
+                'neighbor_params': {
+                    'brush_position_delta': 5,
+                    'angle_delta': np.pi/9,
+                    'width_change_factor': 1.05,
+                    'length_change_factor': 1.05
+                },
+                'size_bounds': {
+                    'min_width': 2,
+                    'max_width': 26,
+                    'max_length': 75
+                }
+            }
+        ],
+        'hillclimbing_params': {
+            'n_samples': 10,
+            'best_of_per_restart': 20,
+            'n_opt_iter': 10,
+            'n_neighbors': 5,
+            'stop_if_no_improvement': True
+        },
+        'reuse_samples_start_iter': 50,
+        'n_queue': 50,
+        'max_n_pixels_regression': None,
+        'x_res': 4,
+        'y_res': 4
+    }
 
     # pr = cProfile.Profile()
     # pr.enable()
@@ -1137,7 +1104,7 @@ def main():
             d['class'] = d['class'].__name__
         json.dump(params_copy, f, indent=4)
 
-    save_every = 5000
+    save_every = 50
     t0 = time()
     painting, loss = make_painting(
         params['brushes'], params['hillclimbing_params'],
