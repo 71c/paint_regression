@@ -197,7 +197,7 @@ def func(m, n, row0, col0, width, length, theta):
 
         b = length / 2
         cos, sin = np.cos(theta), np.sin(theta)
-        
+
         x2, y2 = b * cos, b * sin
         x1, y1 = -x2, -y2
 
@@ -305,7 +305,7 @@ class RectangleBrush(Brush):
         length = round(np.exp(log_length))
         angle = np.random.uniform(-np.pi/2, np.pi/2)
         return cls(row, col, width, length, angle)
-    
+
     @classmethod
     def get_neighbor(cls, x, m, n, brush_position_delta, angle_delta, width_change_factor, length_change_factor, min_width, max_width, max_length):
         row0, col0, width, length, angle = x._row0, x._col0, x._width, x._length, x._angle
@@ -356,7 +356,7 @@ class RectangleBrush(Brush):
         
         if width == 1:
             if length == 1:
-                return row0, row0, [(col0, col0)]
+                return col0, col0, row0, row0
             
             if length <= 5 and abs(theta) <= 0.3:
                 # theta is very small, effectively 0
@@ -583,27 +583,54 @@ class Painter:
 
         self._n_iters = 0
 
-        self._brush_specs = []
         self._brush_type_to_random_brush_func = {}
+        self._brush_type_to_random_brush_func_small = {}
         self._brush_type_to_neighbor_func = {}
+        self._brush_type_to_neighbor_func_small = {}
         self._brush_types = []
-        for brush_spec in brushes:
-            brush_type = brush_spec['class']
-            random_sample_params = brush_spec['random_sample_params']
-            neighbor_params = brush_spec['neighbor_params']
-            size_bounds = brush_spec['size_bounds']
+        scale_amt = np.sqrt(x_res * y_res)
+        for brush_d in brushes:
+            brush_type = brush_d['class']
+
+            size_bounds = brush_d['size_bounds']
+            size_bounds_small = {
+                k: int(round(v / scale_amt)) for k, v in size_bounds.items()}
+
+            rs_params = {}
+            ne_params = {}
+            rs_params_small = {}
+            ne_params_small = {}
+
+            spec_tmp = [
+                (brush_d['random_sample_params'], rs_params, rs_params_small),
+                (brush_d['neighbor_params'], ne_params, ne_params_small)]
+            for old_d, params_d, small_params_d in spec_tmp:
+                if 'scalable' in old_d:
+                    for param in old_d['scalable']:
+                        val = old_d['scalable'][param]
+                        params_d[param] = val
+                        small_params_d[param] = int(round(val / scale_amt))
+                if 'nonscalable' in old_d:
+                    for param in old_d['nonscalable']:
+                        val = old_d['nonscalable'][param]
+                        params_d[param] = val
+                        small_params_d[param] = val
 
             random_brush_func = partial(brush_type.generate_random_brush,
+                m=m, n=n, **rs_params, **size_bounds)
+            random_brush_func_small = partial(brush_type.generate_random_brush,
                 m=m_squares, n=n_squares,
-                **random_sample_params, **size_bounds)
+                **rs_params_small, **size_bounds_small)
 
             neighbor_func = partial(brush_type.get_neighbor,
-                m=m_squares, n=n_squares,
-                **neighbor_params, **size_bounds)
+                m=m, n=n, **ne_params, **size_bounds)
+            neighbor_func_small = partial(brush_type.get_neighbor,
+                m=m_squares, n=n_squares, **ne_params_small, **size_bounds_small)
 
-            self._brush_specs.append((random_brush_func, neighbor_func))
             self._brush_type_to_random_brush_func[brush_type] = random_brush_func
+            self._brush_type_to_random_brush_func_small[brush_type] = random_brush_func_small
             self._brush_type_to_neighbor_func[brush_type] = neighbor_func
+            self._brush_type_to_neighbor_func_small[brush_type] = neighbor_func_small
             self._brush_types.append(brush_type)
 
         assert reuse_samples_start_iter is None or reuse_samples_start_iter == np.inf or type(reuse_samples_start_iter) is int
@@ -687,24 +714,37 @@ class Painter:
     
     def _evaluate_brush_loss_approximation(self, brush):
         m, n = self._m_squares, self._n_squares
+        c = self._c
         sxxs, sxys = self._sxxs, self._sxys
         xbars, ybars = self._xbars, self._ybars
 
         min_row, max_row, row_specs = brush.get_boundary_rows(m, n)
-        assert len(row_specs) == max_row - min_row + 1
+        
+        if len(row_specs) == 0:
+            return 0.0, (0.0, 0.0) # Base case
+        else:
+            assert len(row_specs) == max_row - min_row + 1
+
         n_squares = brush._n_pixels
 
-        brush_xbars_rows, brush_ybars_rows = [], []
-        brush_sxxs_rows, brush_sxys_rows = [], []
+        if n_squares < 0:
+            print(row_specs)
+            print(f'min row: {min_row}, max row: {max_row}')
+            print(f'Brush: {brush}')
+            raise ValueError('n_squares cannot be negative')
+
+        brush_xbars = np.empty((n_squares, c))
+        brush_ybars = np.empty((n_squares, c))
+        brush_sxxs = np.empty(n_squares)
+        brush_sxys = np.empty(n_squares)
+        i = 0
         for row, (min_col, max_col) in zip(range(min_row, max_row + 1), row_specs):
-            brush_xbars_rows.append(xbars[row, min_col : max_col+1])
-            brush_ybars_rows.append(ybars[row, min_col : max_col+1])
-            brush_sxxs_rows.append(sxxs[row, min_col:max_col+1])
-            brush_sxys_rows.append(sxys[row, min_col:max_col+1])
-        brush_xbars = np.vstack(brush_xbars_rows)
-        brush_ybars = np.vstack(brush_ybars_rows)
-        brush_sxxs = np.concatenate(brush_sxxs_rows)
-        brush_sxys = np.concatenate(brush_sxys_rows)
+            num_cols = max_col - min_col + 1
+            brush_xbars[i:i+num_cols] = xbars[row, min_col:max_col+1]
+            brush_ybars[i:i+num_cols] = ybars[row, min_col:max_col+1]
+            brush_sxxs[i:i+num_cols] = sxxs[row, min_col:max_col+1]
+            brush_sxys[i:i+num_cols] = sxys[row, min_col:max_col+1]
+            i += num_cols
 
         # Compute xbar, ybar
         xbar, ybar = brush_xbars.mean(axis=0), brush_ybars.mean(axis=0)
@@ -757,6 +797,9 @@ class Painter:
             x_res, y_res = self._x_res, self._y_res
             sxxs, sxys = self._sxxs, self._sxys
             xbars = self._xbars
+
+            assert np.allclose(sxxs, np.zeros(sxxs.shape), atol=1e-10)
+            assert np.allclose(sxys, np.zeros(sxys.shape), atol=1e-10)
             
             for row, (min_col, max_col) in zip(rows, row_specs):
                 y_min, y_max1 = row * y_res, row * y_res + y_res
@@ -783,11 +826,21 @@ class Painter:
         min_item = min(self._items)
         self._items.remove(min_item)
         return min_item
+    
+    def _get_brush_neighbor_func(self, brush_type, is_small=False):
+        if is_small:
+            return self._brush_type_to_neighbor_func_small[brush_type]
+        return self._brush_type_to_neighbor_func[brush_type]
+    
+    def _get_brush_random_func(self, brush_type, is_small=False):
+        if is_small:
+            return self._brush_type_to_random_brush_func_small[brush_type]
+        return self._brush_type_to_random_brush_func[brush_type]
 
-    def _get_new_item(self, brush_type, random_brush_func=None):
+    def _get_new_item(self, brush_type, is_small=False, random_brush_func=None):
         if random_brush_func is None:
-            random_brush_func = self._brush_type_to_random_brush_func[brush_type]
-        neighbor_func = self._brush_type_to_neighbor_func[brush_type]
+            random_brush_func = self._get_brush_random_func(brush_type, is_small)
+        neighbor_func = self._get_brush_neighbor_func(brush_type, is_small)
 
         # Sometimes, hill_climbing returns None
         # so we keep doing it until we get a legit brush
@@ -800,18 +853,18 @@ class Painter:
                 n_opt_iter=self._n_opt_iter,
                 n_neighbors=self._n_neighbors,
                 stop_if_no_improvement=self._stop_if_no_improvement)
-        
+
         if brush._n_pixels > self._max_n_pixels_regression:
             # re-evaluate the brush loss, without random sample
             loss, params = self._evaluate_brush_loss(brush, random_sample=False)
             if loss == np.inf:
-                return self._get_new_item(brush_type, random_brush_func)
+                return self._get_new_item(brush_type, is_small, random_brush_func)
 
         return self.PrioritizedBrush(loss=loss, brush=brush, params=params)
 
-    def _add_random_brush(self):
+    def _add_random_brush(self, is_small=False):
         brush_type = random.choice(self._brush_types)
-        item = self._get_new_item(brush_type)
+        item = self._get_new_item(brush_type, is_small)
         self._add_item(item)
 
     def paint_stroke(self):
@@ -829,7 +882,7 @@ class Painter:
                 best_params = None
                 for _ in trange(self._n_queue):
                     for brush_type in self._brush_types:
-                        item = self._get_new_item(brush_type)
+                        item = self._get_new_item(brush_type, is_small=True)
                         self._add_item(item)
                         loss, params = item.loss, item.params
                         if loss < best_loss:
@@ -856,10 +909,10 @@ class Painter:
             # print(n_to_add)
             rg = range(n_to_add)
             for _ in rg:
-                self._add_random_brush()
+                self._add_random_brush(is_small=True)
 
             ########## Put a new brush back in queue ###########
-            self._add_random_brush()
+            self._add_random_brush(is_small=True)
 
             self._n_iters += 1
 
@@ -868,7 +921,9 @@ class Painter:
             best_brush = None
             best_loss = np.inf
             best_params = None
-            for random_brush_func, neighbor_func in self._brush_specs:
+            for brush_type in self._brush_types:
+                random_brush_func = self._get_brush_random_func(brush_type, is_small=True)
+                neighbor_func = self._get_brush_neighbor_func(brush_type, is_small=True)
                 brush, loss, params = hill_climbing(
                     self._evaluate_brush_loss, random_brush_func, neighbor_func, **self._hillclimbing_params)
                 if loss < best_loss:
@@ -998,98 +1053,61 @@ def main():
     # }
 
     # parameters for testing
-    # params = {
-    #     'n_iter': 100,
-    #     'brushes': [
-    #         {
-    #             'class': CircleBrush,
-    #             'random_sample_params': {},
-    #             'neighbor_params': {
-    #                 'brush_position_delta': 20,
-    #                 'radius_change_factor': 1.05
-    #             },
-    #             'size_bounds': {
-    #                 'min_radius': 1,
-    #                 'max_radius': 100
-    #             }
-    #         },
-    #         {
-    #             'class': RectangleBrush,
-    #             'random_sample_params': {},
-    #             'neighbor_params': {
-    #                 'brush_position_delta': 20,
-    #                 'angle_delta': np.pi/9,
-    #                 'width_change_factor': 1.05,
-    #                 'length_change_factor': 1.05
-    #             },
-    #             'size_bounds': {
-    #                 'min_width': 2,
-    #                 'max_width': 105,
-    #                 'max_length': 300
-    #             }
-    #         }
-    #     ],
-    #     'hillclimbing_params': {
-    #         'n_samples': 10,
-    #         'best_of_per_restart': 20,
-    #         'n_opt_iter': 10,
-    #         'n_neighbors': 5,
-    #         'stop_if_no_improvement': True
-    #     },
-    #     'reuse_samples_start_iter': 50,
-    #     'n_queue': 50,
-    #     'max_n_pixels_regression': None,
-    #     'x_res': 1,
-    #     'y_res': 1
-    # }
-
     params = {
-        'n_iter': 300,
+        'n_iter': 400,
         'brushes': [
             {
                 'class': CircleBrush,
                 'random_sample_params': {},
                 'neighbor_params': {
-                    'brush_position_delta': 5,
-                    'radius_change_factor': 1.05
+                    'scalable': {
+                        'brush_position_delta': 20
+                    },
+                    'nonscalable': {
+                        'radius_change_factor': 1.05
+                    }
                 },
                 'size_bounds': {
-                    'min_radius': 1,
-                    'max_radius': 25
+                    'min_radius': 16,
+                    'max_radius': 100
                 }
             },
             {
                 'class': RectangleBrush,
                 'random_sample_params': {},
                 'neighbor_params': {
-                    'brush_position_delta': 5,
-                    'angle_delta': np.pi/9,
-                    'width_change_factor': 1.05,
-                    'length_change_factor': 1.05
+                    'scalable': {
+                        'brush_position_delta': 20
+                    },
+                    'nonscalable': {
+                        'angle_delta': np.pi/9,
+                        'width_change_factor': 1.05,
+                        'length_change_factor': 1.05
+                    }
                 },
                 'size_bounds': {
-                    'min_width': 2,
-                    'max_width': 26,
-                    'max_length': 75
+                    'min_width': 16,
+                    'max_width': 104,
+                    'max_length': 300
                 }
             }
         ],
         'hillclimbing_params': {
-            'n_samples': 10,
-            'best_of_per_restart': 20,
+            'n_samples': 20,
+            'best_of_per_restart': 10,
             'n_opt_iter': 10,
             'n_neighbors': 5,
             'stop_if_no_improvement': True
         },
         'reuse_samples_start_iter': 50,
-        'n_queue': 50,
+        'n_queue': 200,
         'max_n_pixels_regression': None,
-        'x_res': 4,
-        'y_res': 4
+        'x_res': 16,
+        'y_res': 16
     }
 
-    # pr = cProfile.Profile()
-    # pr.enable()
+    pr = cProfile.Profile()
+    pr.enable()
 
     tm = datetime.datetime.now()
     folder_name = f'painting_{tm.year}-{tm.month:02}-{tm.day:02}T{tm.hour:02}_{tm.minute:02}_{tm.second:02}'
@@ -1104,7 +1122,7 @@ def main():
             d['class'] = d['class'].__name__
         json.dump(params_copy, f, indent=4)
 
-    save_every = 50
+    save_every = 50_000
     t0 = time()
     painting, loss = make_painting(
         params['brushes'], params['hillclimbing_params'],
@@ -1118,11 +1136,11 @@ def main():
     time_taken_string = f"Time taken: {dt:.6f}s"
     print(time_taken_string)
 
-    # pr.disable()
-    # s = io.StringIO()
-    # ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
-    # ps.print_stats(50)
-    # print(s.getvalue())
+    pr.disable()
+    s = io.StringIO()
+    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+    ps.print_stats(50)
+    print(s.getvalue())
 
     with open(os.path.join(folder_name, 'time_taken.txt'), 'w+') as f:
         f.write(time_taken_string + '\n')
