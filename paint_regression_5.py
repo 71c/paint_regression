@@ -85,15 +85,7 @@ class Brush:
         x1_O, x2_O, y1_O, y2_O = other.get_min_and_max_coords()
 
         return not (x2 < x1_O or x2_O < x1 or y2 < y1_O or y2_O < y1)
-
-
-class CircleBrush(Brush):
-    def __init__(self, row, col, radius):
-        self._row0 = row
-        self._col0 = col
-        self._radius = radius
-        self._n_pixels = None
-
+    
     def get_boundary_rows(self, m, n):
         '''Returns the boundary of the circular brush, in the form of a tuple
         (min_row, max_row, row_specs)
@@ -111,6 +103,14 @@ class CircleBrush(Brush):
                 n_pixels += max_col - min_col + 1
             self._n_pixels = n_pixels
         return min_row, max_row, row_specs
+
+
+class CircleBrush(Brush):
+    def __init__(self, row, col, radius):
+        self._row0 = row
+        self._col0 = col
+        self._radius = radius
+        self._n_pixels = None
 
     def _get_boundary_rows_helper(self, m, n):
         row0, col0, radius = self._row0, self._col0, self._radius
@@ -167,7 +167,7 @@ class CircleBrush(Brush):
 
 
 @jit(nopython=True)
-def func(m, n, row0, col0, width, length, theta):
+def _rectangle_brush_get_boundary_rows(m, n, row0, col0, width, length, theta):
     assert width >= 1
     assert length >= 1
 
@@ -280,19 +280,9 @@ class RectangleBrush(Brush):
         self._angle = angle
         self._n_pixels = None
 
-    def get_boundary_rows(self, m, n):
-        min_row, max_row, row_specs = self._get_boundary_rows_helper(m, n)
-        if self._n_pixels is None:
-            n_pixels = 0
-            for min_col, max_col in row_specs:
-                n_pixels += max_col - min_col + 1
-            self._n_pixels = n_pixels
-        return min_row, max_row, row_specs
-
-    
     def _get_boundary_rows_helper(self, m, n):
         row0, col0, width, length, theta = self._row0, self._col0, self._width, self._length, self._angle
-        return func(m, n, row0, col0, width, length, theta)
+        return _rectangle_brush_get_boundary_rows(m, n, row0, col0, width, length, theta)
 
     @classmethod
     def generate_random_brush(cls, m, n, min_width, max_width, max_length):
@@ -691,8 +681,6 @@ class Painter:
 
         xbar, ybar, sxx, sxy, alpha, beta = get_least_squares_paint_regression_coefs(X, Y)
 
-        # print(sxx, sxy, xbar, ybar, 'original')
-
         # enforce that the brush opacity and color are in range
         o = 1 - beta
         if not (0 < o <= 1):
@@ -727,12 +715,6 @@ class Painter:
 
         n_squares = brush._n_pixels
 
-        if n_squares < 0:
-            print(row_specs)
-            print(f'min row: {min_row}, max row: {max_row}')
-            print(f'Brush: {brush}')
-            raise ValueError('n_squares cannot be negative')
-
         brush_xbars = np.empty((n_squares, c))
         brush_ybars = np.empty((n_squares, c))
         brush_sxxs = np.empty(n_squares)
@@ -756,8 +738,6 @@ class Painter:
         sxx = np.sum(brush_sxxs) + Nk * np.sum(xdiffs**2)
         sxy = np.sum(brush_sxys) + Nk * np.sum(xdiffs * ydiffs)
 
-        # print(sxx, sxy, xbar, ybar, 'new')
-
         alpha, beta = get_least_squares_paint_regression_coefs_from_stats(xbar, ybar, sxx, sxy)
 
         # enforce that the brush opacity and color are in range
@@ -778,14 +758,6 @@ class Painter:
             return self._evaluate_brush_loss_approximation(brush)
         else:
             return self._evaluate_brush_loss_no_approximation(brush, random_sample)
-
-        # loss1, (alpha1, beta1) = self._evaluate_brush_loss_approximation(brush)
-        # loss2, (alpha2, beta2) = self._evaluate_brush_loss_no_approximation(brush, random_sample)
-
-        # print(f"loss: {loss1}, {loss2}, alpha: {alpha1}, {alpha2}, beta: {beta1}, {beta2}")
-        # print()
-
-        # return loss1, (alpha1, beta1)
 
     def _apply_brush(self, brush, alpha, beta):
         painting = self._painting
@@ -1054,7 +1026,7 @@ def main():
 
     # parameters for testing
     params = {
-        'n_iter': 400,
+        'n_iter': 50,
         'brushes': [
             {
                 'class': CircleBrush,
@@ -1099,11 +1071,11 @@ def main():
             'n_neighbors': 5,
             'stop_if_no_improvement': True
         },
-        'reuse_samples_start_iter': 50,
+        'reuse_samples_start_iter': 51,
         'n_queue': 200,
         'max_n_pixels_regression': None,
-        'x_res': 16,
-        'y_res': 16
+        'x_res': 1,
+        'y_res': 1
     }
 
     pr = cProfile.Profile()
