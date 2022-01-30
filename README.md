@@ -1,3 +1,5 @@
+*If you are reading this README.md on GitHub, I encourage you to read the file `paint_regression_description.pdf` instead because the typesetting is better there (especially if you're using dark mode GitHub in which case the math is not readable here!)*
+
 Introduction
 ============
 
