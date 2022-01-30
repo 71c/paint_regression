@@ -1,6 +1,10 @@
 Introduction
 ============
 
+
+https://user-images.githubusercontent.com/33670185/151718369-7b9d419a-b148-4234-9fe0-44c612b0e147.mp4
+
+
 The goal of my paint regression project is to try to get the computer to
 "paint" an image, by using a highly simplified model of how an artist
 paints a picture: this is how one would opt to paint if they wanted to
