@@ -3,6 +3,7 @@
 Introduction
 ============
 
+*Example of the results. The source image is from https://thispersondoesnotexist.com/*
 
 https://user-images.githubusercontent.com/33670185/151718369-7b9d419a-b148-4234-9fe0-44c612b0e147.mp4
 
